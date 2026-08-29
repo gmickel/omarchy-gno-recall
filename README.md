@@ -2,7 +2,7 @@
 
 An [Omarchy](https://omarchy.org/) shell plugin that surfaces [GNO](https://gno.sh) index activity from the bar.
 
-This repository is the plugin source. The bar widget is quiet when the index is healthy (a history glyph only) and adds a distinct shape plus color when there is backlog, staleness, or a setup/degraded fault. Left-click opens an anchored index panel; Super+R (later) or **Recall search** summons the overlay.
+This repository is the plugin source. The bar widget is quiet when the index is healthy (a history glyph only) and adds a distinct shape plus color when there is backlog, staleness, or a setup/degraded fault. Left-click opens an anchored index panel; `omarchy-shell shell toggle gmickel.gno-recall` (or Super+R later) summons the recall overlay.
 
 ## Requirements
 
@@ -10,7 +10,7 @@ This repository is the plugin source. The bar widget is quiet when the index is 
 - [gno](https://github.com/gmickel/gno) **>= 1.36.0** on `PATH`, or an absolute path in the widget's **Path to gno** setting
 - A Nerd Font (Omarchy includes one by default)
 
-`gno peek --json` is the only data path. That command shipped in gno 1.36.0 (`schemaVersion` `peek@1.0`). Older gno builds fail discovery with an `unknown-command` state instead of crashing the shell.
+`gno peek --json` is the snapshot path. Committed overlay search is a second argv-array call: `gno search <query> --json --no-project-affinity -n 20`. Peek shipped in gno 1.36.0 (`schemaVersion` `peek@1.0`). Older gno builds fail discovery with an `unknown-command` state instead of crashing the shell. The plugin never calls `gno get` or `gno serve`.
 
 ## Privilege boundary
 
@@ -78,7 +78,11 @@ omarchy plugin add "$PWD" --enable
 
 `Service.qml` is the only `Process` owner. It resolves `gno` from the widget `gnoPath` (absolute) or `PATH`, then invokes `gno peek --json` as an argv array via `Quickshell.Io.Process` + `StdioCollector`. Bar and overlay surfaces look the service up with `bar.shell.serviceFor("gmickel.gno-recall")` — third-party plugins must not use `firstPartyServiceFor`.
 
-The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). Left-clicking the bar widget toggles the nested `Panel.qml` loader — it does not call that overlay IPC path. The anchored popup is not a manifest `panel` kind, so it cannot steal the overlay toggle.
+The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). It opens on the focused monitor, grabs exclusive keyboard focus, and shows cached peek `recent[]` immediately. Typing filters titles and URI tails in memory — no `gno` subprocess per keystroke. Enter runs exactly one search through `Service.qml`; a new Enter or a query change cancels the in-flight Process and drops late JSON via a search generation id. Esc clears the filter, then dismisses via `shell.hide` so `openPanelIds` stays consistent.
+
+Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits), snippet, and modified time. Arrow keys (and `j`/`k` when the filter is empty) move the highlight. Enter on a row does not open files yet. Search failure/timeout stays inline and keeps the overlay interactive; zero hits and empty-but-initialized indexes have distinct copy from uninitialized guidance.
+
+Left-clicking the bar widget toggles the nested `Panel.qml` loader — it does not call that overlay IPC path. The anchored popup is not a manifest `panel` kind, so it cannot steal the overlay toggle.
 
 ### Bar health states
 

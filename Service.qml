@@ -19,6 +19,8 @@ Item {
   readonly property int maxStdoutChars: 262144
   readonly property int probeTimeoutMs: 3000
   readonly property int peekTimeoutMs: 8000
+  readonly property int searchTimeoutMs: 15000
+  readonly property int searchLimit: 20
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 900, 60, 3600)
 
   readonly property string stateNotFound: "not-found"
@@ -31,6 +33,12 @@ Item {
   readonly property string stateRuntimeError: "runtime-error"
   readonly property string stateReady: "ready"
   readonly property string stateLoading: "loading"
+  readonly property string searchStateIdle: "idle"
+  readonly property string searchStateLoading: "loading"
+  readonly property string searchStateReady: "ready"
+  readonly property string searchStateEmpty: "empty"
+  readonly property string searchStateError: "error"
+  readonly property string searchStateTimeout: "timeout"
 
   property string state: "loading"
   property string message: ""
@@ -43,12 +51,28 @@ Item {
   property string lastPeekAt: ""
   readonly property bool stale: snapshot === null && lastGoodSnapshot !== null
 
+  property string searchState: "idle"
+  property string searchQuery: ""
+  property string searchMessage: ""
+  property var searchResults: []
+  property int searchGenerationId: 0
+  property int searchHitCount: 0
+  property bool searchLoading: false
+
   property string _phase: ""
   property string _stdout: ""
   property string _stderr: ""
   property bool _started: false
   property bool _timedOut: false
   property bool _refreshQueued: false
+
+  property string _searchStdout: ""
+  property string _searchStderr: ""
+  property bool _searchStarted: false
+  property bool _searchTimedOut: false
+  property int _runningSearchGen: 0
+  property string _pendingSearchQuery: ""
+  property int _pendingSearchGen: 0
 
   function setting(name, fallback) {
     var fromProp = settings ? settings[name] : undefined
@@ -158,7 +182,15 @@ Item {
       snapshot: peek,
       lastGoodSnapshot: lastGoodSnapshot,
       stale: stale,
-      panelOpened: panelOpened === true
+      panelOpened: panelOpened === true,
+      searchState: searchState,
+      searchQuery: searchQuery,
+      searchMessage: searchMessage,
+      searchGenerationId: searchGenerationId,
+      searchHitCount: searchHitCount,
+      searchLoading: searchLoading === true,
+      searchLimit: searchLimit,
+      firstSearchUri: searchResults && searchResults.length > 0 ? String(searchResults[0].uri || "") : ""
     })
   }
 
@@ -385,12 +417,231 @@ Item {
     finishIdle()
   }
 
+  function collectionFromUri(uri) {
+    var value = String(uri || "")
+    if (value.indexOf("gno://") !== 0)
+      return ""
+    var rest = value.slice(6)
+    var slash = rest.indexOf("/")
+    return slash >= 0 ? rest.slice(0, slash) : rest
+  }
+
+  function normalizeSearchHits(data) {
+    var hits = data && data.results ? data.results : []
+    var rows = []
+    if (!Array.isArray(hits))
+      return rows
+    for (var i = 0; i < hits.length; i++) {
+      var hit = hits[i]
+      if (!hit)
+        continue
+      var source = hit.source && typeof hit.source === "object" ? hit.source : {}
+      var title = hit.title !== undefined && hit.title !== null ? String(hit.title) : ""
+      var snippet = hit.snippet !== undefined && hit.snippet !== null
+        ? String(hit.snippet)
+        : (hit.content !== undefined && hit.content !== null ? String(hit.content) : "")
+      rows.push({
+        kind: "search",
+        docid: String(hit.docid || ""),
+        uri: String(hit.uri || ""),
+        title: title,
+        collection: collectionFromUri(hit.uri),
+        snippet: snippet,
+        modifiedAt: source.modifiedAt ? String(source.modifiedAt) : "",
+        absPath: source.absPath ? String(source.absPath) : ""
+      })
+    }
+    return rows
+  }
+
+  function cancelSearch(reason) {
+    searchGenerationId += 1
+    _pendingSearchQuery = ""
+    _pendingSearchGen = 0
+    searchKillTimer.stop()
+    if (searchProcess.running) {
+      _searchTimedOut = false
+      searchProcess.signal(15)
+      searchForceKillTimer.restart()
+    } else {
+      searchForceKillTimer.stop()
+    }
+    searchLoading = false
+    if (searchState === searchStateLoading) {
+      searchState = searchStateIdle
+      searchMessage = ""
+      searchResults = []
+      searchHitCount = 0
+    }
+    console.info("gmickel.gno-recall: search cancelled gen=" + searchGenerationId
+      + " reason=" + String(reason || "cancel")
+      + " dropped=" + _runningSearchGen)
+  }
+
+  function runSearch(query) {
+    var q = String(query || "").trim()
+    if (q === "")
+      return
+    searchGenerationId += 1
+    var gen = searchGenerationId
+    searchQuery = q
+    searchMessage = ""
+    searchResults = []
+    searchHitCount = 0
+    searchLoading = true
+    searchState = searchStateLoading
+    _searchTimedOut = false
+    console.info("gmickel.gno-recall: search request gen=" + gen + " query=" + q)
+
+    if (searchProcess.running) {
+      _pendingSearchQuery = q
+      _pendingSearchGen = gen
+      searchProcess.signal(15)
+      searchForceKillTimer.restart()
+      console.info("gmickel.gno-recall: search cancel-inflight running=" + _runningSearchGen
+        + " pending=" + gen)
+      return
+    }
+    startSearchProcess(q, gen)
+  }
+
+  function startSearchProcess(query, gen) {
+    _runningSearchGen = gen
+    _pendingSearchQuery = ""
+    _pendingSearchGen = 0
+    _searchStarted = false
+    _searchTimedOut = false
+    _searchStdout = ""
+    _searchStderr = ""
+    searchKillTimer.stop()
+    searchForceKillTimer.stop()
+
+    if (resolvedGnoPath === "") {
+      searchLoading = false
+      searchState = searchStateError
+      searchMessage = "gno path is not resolved"
+      console.info("gmickel.gno-recall: search error gen=" + gen + " message=" + searchMessage)
+      return
+    }
+
+    searchProcess.command = [
+      resolvedGnoPath,
+      "search",
+      query,
+      "--json",
+      "--no-project-affinity",
+      "-n",
+      String(searchLimit)
+    ]
+    searchProcess.running = true
+    searchKillTimer.interval = searchTimeoutMs
+    searchKillTimer.restart()
+    console.info("gmickel.gno-recall: search start gen=" + gen
+      + " argv=[" + resolvedGnoPath + ", search, <query>, --json, --no-project-affinity, -n, "
+      + searchLimit + "]")
+  }
+
+  function handleSearchExit(exitCode) {
+    searchKillTimer.stop()
+    searchForceKillTimer.stop()
+    var finishedGen = _runningSearchGen
+    var pendingQuery = _pendingSearchQuery
+    var pendingGen = _pendingSearchGen
+    var stdout = String(searchStdout.text || _searchStdout || "")
+    var stderr = String(searchStderr.text || _searchStderr || "")
+    var timedOut = _searchTimedOut
+    var started = _searchStarted
+    _runningSearchGen = 0
+    _pendingSearchQuery = ""
+    _pendingSearchGen = 0
+    _searchTimedOut = false
+
+    if (pendingQuery !== "" && pendingGen === searchGenerationId) {
+      console.info("gmickel.gno-recall: search late-drop gen=" + finishedGen
+        + " current=" + searchGenerationId
+        + " starting pending gen=" + pendingGen)
+      startSearchProcess(pendingQuery, pendingGen)
+      return
+    }
+
+    if (finishedGen !== searchGenerationId) {
+      console.info("gmickel.gno-recall: search late-drop gen=" + finishedGen
+        + " current=" + searchGenerationId)
+      return
+    }
+
+    searchLoading = false
+
+    if (timedOut) {
+      searchResults = []
+      searchHitCount = 0
+      searchState = searchStateTimeout
+      searchMessage = "Search timed out"
+      console.info("gmickel.gno-recall: search timeout gen=" + finishedGen)
+      return
+    }
+    if (!started) {
+      searchResults = []
+      searchHitCount = 0
+      searchState = searchStateError
+      searchMessage = "Failed to start gno search"
+      console.info("gmickel.gno-recall: search spawn-failure gen=" + finishedGen)
+      return
+    }
+    if (stdout.length > maxStdoutChars || stderr.length > maxStdoutChars) {
+      searchResults = []
+      searchHitCount = 0
+      searchState = searchStateError
+      searchMessage = "gno search output exceeded the size bound"
+      console.info("gmickel.gno-recall: search error gen=" + finishedGen + " message=" + searchMessage)
+      return
+    }
+
+    if (exitCode !== 0) {
+      var errObj = errorPayload(stderr, stdout)
+      searchResults = []
+      searchHitCount = 0
+      searchState = searchStateError
+      searchMessage = errorDetail(errObj, stderr, stdout, "gno search failed")
+      console.info("gmickel.gno-recall: search error gen=" + finishedGen
+        + " exit=" + exitCode + " message=" + searchMessage)
+      return
+    }
+
+    var data = parseJsonObject(stdout)
+    if (!data || !Array.isArray(data.results)) {
+      searchResults = []
+      searchHitCount = 0
+      searchState = searchStateError
+      searchMessage = "gno search returned unreadable or incomplete JSON"
+      console.info("gmickel.gno-recall: search malformed-json gen=" + finishedGen)
+      return
+    }
+
+    var rows = normalizeSearchHits(data)
+    searchResults = rows
+    searchHitCount = rows.length
+    searchMessage = ""
+    searchState = rows.length === 0 ? searchStateEmpty : searchStateReady
+    console.info("gmickel.gno-recall: search ok gen=" + finishedGen
+      + " hits=" + rows.length
+      + " first=" + (rows.length > 0 ? rows[0].uri : ""))
+  }
+
   function killProcess(proc, forceTimer) {
     if (!proc.running)
       return
     _timedOut = true
     proc.signal(15)
     forceTimer.restart()
+  }
+
+  function killSearchProcess() {
+    if (!searchProcess.running)
+      return
+    _searchTimedOut = true
+    searchProcess.signal(15)
+    searchForceKillTimer.restart()
   }
 
   Timer {
@@ -427,6 +678,20 @@ Item {
     interval: 1000
     repeat: false
     onTriggered: if (peekProcess.running) peekProcess.signal(9)
+  }
+
+  Timer {
+    id: searchKillTimer
+    interval: root.searchTimeoutMs
+    repeat: false
+    onTriggered: root.killSearchProcess()
+  }
+
+  Timer {
+    id: searchForceKillTimer
+    interval: 1000
+    repeat: false
+    onTriggered: if (searchProcess.running) searchProcess.signal(9)
   }
 
   Process {
@@ -484,6 +749,32 @@ Item {
     }
     onExited: function(exitCode) {
       root.handlePeekExit(exitCode)
+    }
+  }
+
+  Process {
+    id: searchProcess
+    running: false
+    command: []
+    stdout: StdioCollector {
+      id: searchStdout
+      waitForEnd: true
+      onStreamFinished: root._searchStdout = text
+    }
+    stderr: StdioCollector {
+      id: searchStderr
+      waitForEnd: true
+      onStreamFinished: root._searchStderr = text
+    }
+    onStarted: root._searchStarted = true
+    onRunningChanged: {
+      if (!running && root._runningSearchGen !== 0 && !root._searchStarted && !root._searchTimedOut) {
+        searchKillTimer.stop()
+        root.handleSearchExit(1)
+      }
+    }
+    onExited: function(exitCode) {
+      root.handleSearchExit(exitCode)
     }
   }
 }
