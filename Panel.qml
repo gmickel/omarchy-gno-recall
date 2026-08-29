@@ -14,6 +14,7 @@ Item {
   property var hostWidget: null
   property var anchorItem: null
   property bool opened: false
+  property bool popoutSwitchClosing: false
 
   function open() {
     opened = true
@@ -28,5 +29,13 @@ Item {
       close()
     else
       open()
+  }
+
+  function closeForPopoutSwitch() {
+    popoutSwitchClosing = true
+    close()
+    Qt.callLater(function() {
+      popoutSwitchClosing = false
+    })
   }
 }

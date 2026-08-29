@@ -36,15 +36,23 @@ Item {
 
   function peekState(arg) {
     if (!service)
-      return JSON.stringify({ error: "service-unavailable" })
-    if (typeof service.debugSnapshot === "function")
-      return service.debugSnapshot()
-    return JSON.stringify({
-      state: service.state,
-      resolvedGnoPath: service.resolvedGnoPath || "",
-      generationId: service.generationId || 0,
-      snapshot: service.snapshot
-    })
+      return JSON.stringify({ error: "service-unavailable", overlayOpened: root.opened })
+    var payload = typeof service.debugSnapshot === "function"
+      ? service.debugSnapshot()
+      : JSON.stringify({
+          state: service.state,
+          resolvedGnoPath: service.resolvedGnoPath || "",
+          generationId: service.generationId || 0,
+          snapshot: service.snapshot
+        })
+    try {
+      var parsed = JSON.parse(payload)
+      parsed.overlayOpened = root.opened
+      parsed.panelOpened = service.panelOpened === true
+      return JSON.stringify(parsed)
+    } catch (error) {
+      return payload
+    }
   }
 
   PanelWindow {

@@ -2,7 +2,7 @@
 
 An [Omarchy](https://omarchy.org/) shell plugin that surfaces [GNO](https://gno.sh) index activity from the bar.
 
-This repository is the plugin source. The widget is a small glyph today; later work adds the anchored popup and overlay.
+This repository is the plugin source. The bar widget is quiet when the index is healthy (a history glyph only) and adds a distinct shape plus color when there is backlog, staleness, or a setup/degraded fault. Later work fills the anchored popup and overlay.
 
 ## Requirements
 
@@ -78,7 +78,23 @@ omarchy plugin add "$PWD" --enable
 
 `Service.qml` is the only `Process` owner. It resolves `gno` from the widget `gnoPath` (absolute) or `PATH`, then invokes `gno peek --json` as an argv array via `Quickshell.Io.Process` + `StdioCollector`. Bar and overlay surfaces look the service up with `bar.shell.serviceFor("gmickel.gno-recall")` — third-party plugins must not use `firstPartyServiceFor`.
 
-The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). The anchored popup will be an internal `Panel.qml` loaded by `BarWidget.qml`; it is not a manifest `panel` kind, so it cannot steal that toggle.
+The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). Left-clicking the bar widget toggles the nested `Panel.qml` loader — it does not call that overlay IPC path. The anchored popup is not a manifest `panel` kind, so it cannot steal the overlay toggle.
+
+### Bar health states
+
+Every state pairs a different glyph or badge **shape** with a theme color (`Color.foreground` / `Color.muted` / `Color.urgent`). Color is never the only signal.
+
+| Visual | When | Glyph / marker |
+| --- | --- | --- |
+| Healthy | `ready`, initialized, no backlog | History glyph only |
+| Backlog pending | `backlog.pending` > 0 | History + `●N` (circle) |
+| Backlog failed | `backlog.failed` > 0 | History + `◆N` (diamond) |
+| Stale | Latest refresh failed, last-good snapshot kept | History + `~` |
+| Setup guidance | `not-found` / `not-executable` / `version-skew` / `unknown-command` | Question-circle |
+| Init guidance | Peek succeeded with `initialized: false` | Plus |
+| Degraded | `runtime-error` (peek `RUNTIME` envelope) / `timeout` / `malformed-json` / `spawn-failure` | Warning triangle |
+
+Hover the widget for a short accessible status line. Middle-click refreshes the peek snapshot.
 
 ## License
 

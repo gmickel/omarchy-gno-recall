@@ -28,6 +28,7 @@ Item {
   readonly property string stateMalformedJson: "malformed-json"
   readonly property string stateUnknownCommand: "unknown-command"
   readonly property string stateVersionSkew: "version-skew"
+  readonly property string stateRuntimeError: "runtime-error"
   readonly property string stateReady: "ready"
   readonly property string stateLoading: "loading"
 
@@ -38,7 +39,9 @@ Item {
   property var lastGoodSnapshot: null
   property int generationId: 0
   property bool loading: false
+  property bool panelOpened: false
   property string lastPeekAt: ""
+  readonly property bool stale: snapshot === null && lastGoodSnapshot !== null
 
   property string _phase: ""
   property string _stdout: ""
@@ -154,8 +157,35 @@ Item {
       supportedGnoFloor: supportedGnoFloor,
       snapshot: peek,
       lastGoodSnapshot: lastGoodSnapshot,
-      stale: snapshot === null && lastGoodSnapshot !== null
+      stale: stale,
+      panelOpened: panelOpened === true
     })
+  }
+
+  function dropLiveSnapshot() {
+    snapshot = null
+  }
+
+  function errorPayload(stderrText, stdoutText) {
+    return parseJsonObject(stderrText) || parseJsonObject(stdoutText)
+  }
+
+  function isRuntimeEnvelope(parsedError) {
+    var err = parsedError && parsedError.error ? parsedError.error : parsedError
+    return !!(err && String(err.code || "") === "RUNTIME")
+  }
+
+  function errorDetail(parsedError, stderrText, stdoutText, fallback) {
+    var err = parsedError && parsedError.error ? parsedError.error : parsedError
+    if (err && err.message)
+      return String(err.message)
+    var stderr = String(stderrText || "").trim()
+    if (stderr !== "")
+      return stderr
+    var stdout = String(stdoutText || "").trim()
+    if (stdout !== "")
+      return stdout
+    return fallback
   }
 
   function refresh() {
@@ -174,6 +204,7 @@ Item {
     var configured = configuredGnoPath()
     if (configured !== "") {
       if (configured.charAt(0) !== "/") {
+        dropLiveSnapshot()
         loading = false
         setState(stateNotFound, "gnoPath must be an absolute path")
         return
@@ -223,12 +254,14 @@ Item {
     probeForceKillTimer.stop()
     var stdout = String(probeStdout.text || _stdout || "").trim()
     if (_timedOut) {
+      dropLiveSnapshot()
       loading = false
       setState(stateTimeout, "Timed out resolving gno")
       finishIdle()
       return
     }
     if (!_started) {
+      dropLiveSnapshot()
       loading = false
       setState(stateSpawnFailure, "Failed to start gno discovery")
       finishIdle()
@@ -237,12 +270,14 @@ Item {
 
     if (_phase === "which") {
       if (exitCode !== 0 || stdout === "") {
+        dropLiveSnapshot()
         loading = false
         setState(stateNotFound, "gno was not found on PATH")
         finishIdle()
         return
       }
       if (stdout.charAt(0) !== "/") {
+        dropLiveSnapshot()
         loading = false
         setState(stateNotFound, "PATH lookup did not return an absolute path")
         finishIdle()
@@ -255,6 +290,7 @@ Item {
 
     if (_phase === "exists") {
       if (exitCode !== 0) {
+        dropLiveSnapshot()
         loading = false
         setState(stateNotFound, "gno was not found at " + resolvedGnoPath)
         finishIdle()
@@ -266,6 +302,7 @@ Item {
 
     if (_phase === "exec") {
       if (exitCode !== 0) {
+        dropLiveSnapshot()
         loading = false
         setState(stateNotExecutable, "gno is not executable: " + resolvedGnoPath)
         finishIdle()
@@ -275,6 +312,7 @@ Item {
       return
     }
 
+    dropLiveSnapshot()
     loading = false
     setState(stateSpawnFailure, "Unexpected discovery phase")
     finishIdle()
@@ -288,43 +326,49 @@ Item {
     loading = false
 
     if (_timedOut) {
+      dropLiveSnapshot()
       setState(stateTimeout, "Timed out running gno peek --json")
       finishIdle()
       return
     }
     if (!_started) {
+      dropLiveSnapshot()
       setState(stateSpawnFailure, "Failed to start gno peek --json")
       finishIdle()
       return
     }
     if (stdout.length > maxStdoutChars || stderr.length > maxStdoutChars) {
+      dropLiveSnapshot()
       setState(stateMalformedJson, "gno peek output exceeded the size bound")
       finishIdle()
       return
     }
 
-    var errObj = parseJsonObject(stderr)
+    var errObj = errorPayload(stderr, stdout)
     if (isUnknownCommand(stderr, errObj)) {
+      dropLiveSnapshot()
       setState(stateUnknownCommand, "gno does not provide peek; install gno >= " + supportedGnoFloor)
       finishIdle()
       return
     }
 
     if (exitCode !== 0) {
-      var fail = errObj && errObj.error ? errObj.error : null
-      var detail = fail && fail.message ? String(fail.message) : (stderr.trim() || "gno peek failed")
-      setState(stateSpawnFailure, detail)
+      dropLiveSnapshot()
+      var detail = errorDetail(errObj, stderr, stdout, "gno peek failed")
+      setState(isRuntimeEnvelope(errObj) ? stateRuntimeError : stateSpawnFailure, detail)
       finishIdle()
       return
     }
 
     var data = parseJsonObject(stdout)
     if (!data || typeof data.schemaVersion !== "string" || typeof data.gnoVersion !== "string") {
+      dropLiveSnapshot()
       setState(stateMalformedJson, "gno peek returned unreadable or incomplete JSON")
       finishIdle()
       return
     }
     if (!versionAtLeast(data.gnoVersion, supportedGnoFloor)) {
+      dropLiveSnapshot()
       setState(stateVersionSkew, "gno " + data.gnoVersion + " is below the " + supportedGnoFloor + " floor")
       finishIdle()
       return
@@ -403,6 +447,7 @@ Item {
     onRunningChanged: {
       if (!running && root._phase !== "peek" && root._phase !== "" && !root._started && !root._timedOut) {
         probeKillTimer.stop()
+        root.dropLiveSnapshot()
         root.loading = false
         root.setState(root.stateSpawnFailure, "Failed to start gno discovery")
         root.finishIdle()
@@ -431,6 +476,7 @@ Item {
     onRunningChanged: {
       if (!running && root._phase === "peek" && !root._started && !root._timedOut) {
         peekKillTimer.stop()
+        root.dropLiveSnapshot()
         root.loading = false
         root.setState(root.stateSpawnFailure, "Failed to start gno peek --json")
         root.finishIdle()
