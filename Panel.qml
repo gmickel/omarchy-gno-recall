@@ -307,11 +307,25 @@ Panel {
       : !!(row && String(row.absPath || "").trim() !== "")
   }
 
+  function recentCanOpenDocument(row) {
+    return service && typeof service.canOpenDocument === "function"
+      ? service.canOpenDocument(row)
+      : recentCanOpenFile(row)
+  }
+
   function openRecentFile(index) {
     var row = recentRow(index)
-    if (!row || !service || typeof service.openSourceFile !== "function")
+    if (!row) {
+      if (service && typeof service.openDocument === "function")
+        service.openDocument(null)
       return
-    service.openSourceFile(row.absPath)
+    }
+    if (service && typeof service.openDocument === "function") {
+      service.openDocument(row)
+      return
+    }
+    if (service && typeof service.setActionStatus === "function")
+      service.setActionStatus("No file path — start gno serve --detach to open in the web UI.")
   }
 
   function openRecentWeb(index) {
@@ -634,7 +648,7 @@ Panel {
           Text {
             visible: root.bodyKind === "index" && root.recentRows.length > 0
             width: parent.width
-            text: "Enter opens file · w opens web UI"
+            text: "Enter opens · w opens web UI"
             color: root.dim
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
@@ -659,7 +673,7 @@ Panel {
                 MouseArea {
                   anchors.fill: parent
                   hoverEnabled: true
-                  cursorShape: root.recentCanOpenFile(modelData) ? Qt.PointingHandCursor : Qt.ArrowCursor
+                  cursorShape: root.recentCanOpenDocument(modelData) ? Qt.PointingHandCursor : Qt.ArrowCursor
                   onEntered: root.selectKind("recent", index)
                   onClicked: {
                     root.selectKind("recent", index)
@@ -680,7 +694,7 @@ Panel {
                     width: parent.width
                     text: root.recentTitle(modelData)
                     color: root.contentForeground
-                    opacity: root.recentCanOpenFile(modelData) ? 1 : 0.55
+                    opacity: root.recentCanOpenDocument(modelData) ? 1 : 0.55
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.body
                     elide: Text.ElideRight
@@ -693,7 +707,7 @@ Panel {
                       : (root.recentDetail(modelData) !== "—"
                         ? root.recentDetail(modelData) + " · no file path"
                         : "no file path")
-                    color: root.recentCanOpenFile(modelData) ? root.dim : Color.urgent
+                    color: root.recentCanOpenDocument(modelData) ? root.dim : Color.urgent
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.caption
                     elide: Text.ElideRight

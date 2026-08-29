@@ -412,7 +412,7 @@ Item {
       uri: String(row && row.uri ? row.uri : ""),
       title: title,
       collection: String(row && row.collection ? row.collection : root.lsCollection),
-      snippet: relPath,
+      snippet: "",
       modifiedAt: "",
       absPath: String(row && row.absPath ? row.absPath : ""),
       relPath: relPath,
@@ -428,7 +428,7 @@ Item {
       uri: "",
       title: "Load more…",
       collection: root.lsCollection,
-      snippet: "Next " + root.lsPageSize + " documents",
+      snippet: "",
       modifiedAt: "",
       absPath: "",
       relPath: "",
@@ -536,7 +536,7 @@ Item {
       return "Filtered recents — Enter to search · Tab collections"
     var recents = cachedRecents().length
     return recents > 0
-      ? recents + " recent · Tab collections · Enter file · Ctrl+Enter web"
+      ? recents + " recent · Tab collections · Enter opens · Ctrl+Enter web"
       : "Tab to browse collections"
   }
 
@@ -724,9 +724,12 @@ Item {
         service.runLs(lsCollection, 0)
       return
     }
-    if (!service || typeof service.openSourceFile !== "function")
+    if (service && typeof service.openDocument === "function") {
+      service.openDocument(row)
       return
-    service.openSourceFile(row.absPath)
+    }
+    if (service && typeof service.setActionStatus === "function")
+      service.setActionStatus("No file path — start gno serve --detach to open in the web UI.")
   }
 
   function openWebAt(index) {
@@ -812,8 +815,13 @@ Item {
     base.firstAbsPath = first ? String(first.absPath || "") : ""
     base.selectedUri = selected ? String(selected.uri || "") : ""
     base.selectedAbsPath = selected ? String(selected.absPath || "") : ""
-    base.selectedCanOpenFile = selected ? String(selected.absPath || "").trim() !== "" : false
-    base.fileOpenDisabled = selected ? String(selected.absPath || "").trim() === "" : false
+    base.selectedCanOpenFile = service && typeof service.canOpenFile === "function"
+      ? service.canOpenFile(selected)
+      : !!(selected && String(selected.absPath || "").trim() !== "")
+    base.selectedCanOpenDocument = service && typeof service.canOpenDocument === "function"
+      ? service.canOpenDocument(selected)
+      : base.selectedCanOpenFile
+    base.fileOpenDisabled = !base.selectedCanOpenFile
     base.webDocUrl = service && typeof service.webDocUrl === "function" && selected
       ? service.webDocUrl(selected.uri)
       : ""
@@ -1058,9 +1066,16 @@ Item {
               readonly property bool isCollection: kind === "collection"
               readonly property bool isMore: kind === "more"
               readonly property bool canOpenFile: !isCollection && !isMore && String(absPath || "").trim() !== ""
+              readonly property bool canOpenDocument: {
+                if (isCollection || isMore)
+                  return false
+                if (root.service && typeof root.service.canOpenDocument === "function")
+                  return root.service.canOpenDocument({ absPath: absPath, uri: uri, relPath: relPath })
+                return canOpenFile
+              }
               readonly property string metaText: {
                 if (isMore)
-                  return snippet !== "" ? snippet : "Page Down or Enter"
+                  return "Next " + root.lsPageSize + " documents"
                 if (isCollection)
                   return documentCount + (documentCount === 1 ? " document" : " documents")
                 var bits = []
@@ -1071,9 +1086,7 @@ Item {
                 var stamp = root.formatStamp(modifiedAt)
                 if (stamp !== "")
                   bits.push(stamp)
-                if (kind !== "browse" && !canOpenFile)
-                  bits.push("no file path")
-                if (kind === "browse" && !canOpenFile)
+                if (!canOpenFile)
                   bits.push("no file path")
                 return bits.join(" · ")
               }
@@ -1095,7 +1108,7 @@ Item {
                   width: parent.width
                   text: row.title
                   color: row.hasCursor ? root.selectedText : root.foreground
-                  opacity: row.canOpenFile ? 1 : 0.55
+                  opacity: row.canOpenDocument ? 1 : 0.55
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.title
                   elide: Text.ElideRight
@@ -1128,7 +1141,7 @@ Item {
               MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true
-                cursorShape: row.canOpenFile ? Qt.PointingHandCursor : Qt.ArrowCursor
+                cursorShape: row.canOpenDocument ? Qt.PointingHandCursor : Qt.ArrowCursor
                 onPositionChanged: function(mouse) {
                   root.selectFromPointer(row.index, row, mouse)
                 }

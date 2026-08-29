@@ -123,27 +123,41 @@ If the script exits 1, keep using the IPC one-liner or bind a free chord yoursel
 
 ### Open actions
 
-Both the overlay rows and the panel recents list share the same helpers in `Service.qml`. Missing or empty `absPath` disables file-open for that row (the plugin never calls `gno get`). The plugin never starts `gno serve`.
+Both the overlay rows and the panel recents list share `Service.qml`'s `openDocument(row)`. Enter on a document row always tries to open something: the source file when `absPath` is present or derivable, otherwise the web UI deep link when `serve.running`, otherwise a non-blocking guidance notice. The plugin never calls `gno get` and never starts `gno serve`.
 
-| Surface | Open source file | Open in GNO web UI |
-| --- | --- | --- |
-| Overlay recents / search / browsed docs | **Enter** (or click) on a highlighted row | **Ctrl+Enter** |
-| Overlay collections list | **Enter** drills into the collection | — |
-| Panel recents | **Enter** (or click) | **w** |
+**Enter / click** (primary open via `openDocument`):
+
+| Condition | Outcome |
+| --- | --- |
+| `absPath` present or joined from `collection.path` + `source.relPath` | Open the source file (`xdg-open` + absPath) |
+| No `absPath`, `serve.running` | Open `{serve.url}/doc?uri=<encodeURIComponent(uri)>` (success; brief “Opened in web UI”) |
+| No `absPath`, serve down | Notice: `No file path — start gno serve --detach to open in the web UI.` Nothing is spawned. |
+
+**Open matrix** (row type × key × outcome):
+
+| Row | Enter / click | Ctrl+Enter | w |
+| --- | --- | --- | --- |
+| Overlay recents | file, else fallback-to-web, else guidance | web (guidance if serve down) | — |
+| Overlay search hits | file, else fallback-to-web, else guidance | web (guidance if serve down) | — |
+| Overlay browsed docs | file (joined absPath), else fallback-to-web, else guidance | web (guidance if serve down) | — |
+| Overlay collection | drill-in | — | — |
+| Overlay Load more… | load next page | — | — |
+| Panel recents | file, else fallback-to-web, else guidance | — | web (guidance if serve down) |
+| Panel “Open GNO web UI” | home URL when serve is up; disabled when down | — | — |
 
 ### Overlay keys
 
 | Key | Recents | Collections | Documents |
 | --- | --- | --- | --- |
 | Type / Backspace | Filter recents in memory | Filter collection names | Filter loaded rows |
-| Enter | Search if a filter is typed; otherwise open the file | Open the highlighted collection | Open the file (or load the next page on **Load more…**) |
+| Enter | Search if a filter is typed; otherwise open the document | Open the highlighted collection | Open the document (or load the next page on **Load more…**) |
 | Ctrl+Enter | Open web UI | — | Open web UI |
 | Tab / Ctrl+B | Switch to collections | — | — |
 | Esc | Clear filter, then dismiss | Clear filter, then back to recents | Clear filter, then back to collections |
 | Backspace (empty filter) | — | Back to recents | Back to collections |
 | Page Down / Right | Jump highlight | Jump highlight | Load more when the page is full |
 
-File-open launches the desktop default handler (`xdg-open`) with the row's `absPath` (peek recents use `absPath`; search hits use `source.absPath`; browsed docs join `collection.path` + `source.relPath`). Web-open launches `omarchy-launch-browser` at `{serve.url}/doc?uri=<encodeURIComponent(uri)>`. If serve is down, a short non-blocking notice tells you to run `gno serve --detach` — nothing is spawned. A spawn failure of the opener is the same kind of notice; the overlay and panel stay interactive.
+File-open launches the desktop default handler (`xdg-open`) with the row's `absPath` (peek recents use `absPath`; search hits use `source.absPath`; browsed docs join `collection.path` + `source.relPath`). Explicit web-open (Ctrl+Enter / **w**) launches `omarchy-launch-browser` at `{serve.url}/doc?uri=<encodeURIComponent(uri)>`. If serve is down, that key shows a short non-blocking notice (`Web UI is down. Start it with: gno serve --detach`) and spawns nothing. A spawn failure of the opener is the same kind of notice; the overlay and panel stay interactive.
 
 Left-clicking the bar widget toggles the nested `Panel.qml` loader — it does not call that overlay IPC path. The anchored popup is not a manifest `panel` kind, so it cannot steal the overlay toggle.
 
@@ -163,7 +177,7 @@ Every state pairs a different glyph or badge **shape** with a theme color (`Colo
 
 Hover the widget for a short accessible status line. Middle-click refreshes the peek snapshot. Left-click opens the anchored panel: health line, document/collection counts, backlog, last-indexed time, and recent titles (URI-tail fallback when title is null). Escape closes it. Arrow keys move the highlight across recents and the footer actions.
 
-The panel never starts `gno serve`. **Open GNO web UI** is enabled only when peek reports `serve.running`; otherwise it stays disabled with `start: gno serve --detach`. **Recall search** toggles the overlay via `omarchy-shell shell toggle gmickel.gno-recall`. **Browse collections** summons the overlay directly into collections mode (`{"mode":"collections"}`). Recent rows open the source file on Enter/click and the web UI on `w`, with the same absPath / serve-down rules as the overlay.
+The panel never starts `gno serve`. **Open GNO web UI** is enabled only when peek reports `serve.running`; otherwise it stays disabled with `start: gno serve --detach`. **Recall search** toggles the overlay via `omarchy-shell shell toggle gmickel.gno-recall`. **Browse collections** summons the overlay directly into collections mode (`{"mode":"collections"}`). Recent rows use the same `openDocument` matrix as the overlay: Enter/click opens the file (or falls back to web / guidance), and `w` is the explicit web-open.
 
 When peek has nothing to list, the panel shows one of three copy blocks instead of going blank: run `gno init` (uninitialized), add documents (initialized but empty), or setup/degraded guidance with the service error message.
 

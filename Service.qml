@@ -113,6 +113,7 @@ Item {
   property string _openKind: ""
   property var _pendingOpenArgv: []
   property string _pendingOpenKind: ""
+  property string _pendingOpenNotice: ""
 
   property string _phase: ""
   property string _stdout: ""
@@ -355,7 +356,8 @@ Item {
       serveRunning: serveIsRunning(),
       serveUrl: serveHomeUrl(),
       fileOpener: resolveFileOpener(),
-      browserOpener: resolveBrowserOpener()
+      browserOpener: resolveBrowserOpener(),
+      guidanceNotice: missingPathGuidance()
     })
   }
 
@@ -1082,7 +1084,7 @@ Item {
         uri: uri,
         title: title,
         collection: String(collectionName || ""),
-        snippet: relPath,
+        snippet: "",
         modifiedAt: "",
         absPath: browsedAbsPath(collectionPath, relPath),
         relPath: relPath
@@ -1528,13 +1530,45 @@ Item {
   function rowAbsPath(row) {
     if (!row)
       return ""
-    return String(row.absPath || "").trim()
+    var direct = String(row.absPath || "").trim()
+    if (direct !== "")
+      return direct
+    var rel = String(row.relPath || "").trim()
+    var colPath = String(row.collectionPath || "").trim()
+    if (rel === "")
+      return ""
+    return browsedAbsPath(colPath, rel)
+  }
+
+  function rowUri(row) {
+    if (!row)
+      return ""
+    return String(row.uri || "").trim()
   }
 
   function canOpenFile(rowOrPath) {
     if (rowOrPath && typeof rowOrPath === "object")
       return rowAbsPath(rowOrPath) !== ""
     return String(rowOrPath || "").trim() !== ""
+  }
+
+  function canOpenDocument(row) {
+    if (canOpenFile(row))
+      return true
+    return serveIsRunning() && serveHomeUrl() !== "" && rowUri(row) !== ""
+  }
+
+  function missingPathGuidance() {
+    return "No file path — start gno serve --detach to open in the web UI."
+  }
+
+  function showMissingPathGuidance(kind) {
+    lastOpenKind = String(kind || "document")
+    lastOpenArgv = []
+    lastOpenOk = false
+    setActionStatus(missingPathGuidance())
+    console.info("gmickel.gno-recall: open-document guidance missing-abspath serve-down")
+    return false
   }
 
   function serveIsRunning() {
@@ -1565,7 +1599,7 @@ Item {
     return parts.join(", ")
   }
 
-  function launchArgv(argv, kind) {
+  function launchArgv(argv, kind, successNotice) {
     var list = []
     var source = argv || []
     for (var i = 0; i < source.length; i++)
@@ -1574,6 +1608,7 @@ Item {
     lastOpenArgv = list
     lastOpenOk = false
     lastOpenMessage = ""
+    _pendingOpenNotice = String(successNotice || "")
     console.info("gmickel.gno-recall: exec argv=[" + formatArgv(list) + "] kind=" + lastOpenKind)
 
     if (list.length === 0) {
@@ -1585,7 +1620,7 @@ Item {
       // A second open while the probe is in flight still launches argv-safe.
       detachOpen(list)
       lastOpenOk = true
-      setActionStatus("")
+      setActionStatus(_pendingOpenNotice)
       return true
     }
 
@@ -1627,13 +1662,15 @@ Item {
     detachOpen(argv)
     lastOpenOk = true
     lastOpenMessage = ""
-    setActionStatus("")
+    setActionStatus(_pendingOpenNotice)
+    _pendingOpenNotice = ""
     console.info("gmickel.gno-recall: open-ok kind=" + kind
       + " argv=[" + formatArgv(argv) + "]")
   }
 
   function finishOpenFailure(detail) {
     lastOpenOk = false
+    _pendingOpenNotice = ""
     setActionStatus(String(detail || "Could not start opener"))
     console.info("gmickel.gno-recall: open-fail kind=" + lastOpenKind
       + " message=" + lastOpenMessage
@@ -1642,18 +1679,26 @@ Item {
 
   function openSourceFile(absPath) {
     var path = String(absPath || "").trim()
-    if (path === "") {
-      lastOpenKind = "file"
-      lastOpenArgv = []
-      lastOpenOk = false
-      setActionStatus("No file path — open source is disabled for this row")
-      console.info("gmickel.gno-recall: open-file disabled missing-abspath")
-      return false
-    }
+    if (path === "")
+      return showMissingPathGuidance("file")
     return launchArgv([resolveFileOpener(), path], "file")
   }
 
-  function openWebUi(uri) {
+  function openDocument(row) {
+    var path = rowAbsPath(row)
+    if (path !== "")
+      return openSourceFile(path)
+
+    var uri = rowUri(row)
+    if (serveIsRunning() && serveHomeUrl() !== "" && uri !== "") {
+      console.info("gmickel.gno-recall: open-document fallback-web uri=" + uri)
+      return openWebUi(uri, "Opened in web UI")
+    }
+
+    return showMissingPathGuidance("document")
+  }
+
+  function openWebUi(uri, successNotice) {
     var value = String(uri || "").trim()
     if (!serveIsRunning() || serveHomeUrl() === "") {
       lastOpenKind = "web"
@@ -1670,7 +1715,7 @@ Item {
       setActionStatus("Missing document URI — cannot open web UI")
       return false
     }
-    return launchArgv([resolveBrowserOpener(), webDocUrl(value)], "web")
+    return launchArgv([resolveBrowserOpener(), webDocUrl(value)], "web", successNotice)
   }
 
   function openServeHome() {
