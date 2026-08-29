@@ -129,7 +129,7 @@ Both the overlay rows and the panel recents list share `Service.qml`'s `openDocu
 
 | Condition | Outcome |
 | --- | --- |
-| `absPath` present or joined from `collection.path` + `source.relPath` | Open the source file (`xdg-open` + absPath) |
+| `absPath` present or joined from `collection.path` + `source.relPath` | Open the source file (text: `$VISUAL` / omawrite; else `gio open` / `xdg-open`) |
 | No `absPath`, `serve.running` | Open `{serve.url}/doc?uri=<encodeURIComponent(uri)>` (success; brief “Opened in web UI”) |
 | No `absPath`, serve down | Notice: `No file path — start gno serve --detach to open in the web UI.` Nothing is spawned. |
 
@@ -157,7 +157,7 @@ Both the overlay rows and the panel recents list share `Service.qml`'s `openDocu
 | Backspace (empty filter) | — | Back to recents | Back to collections |
 | Page Down / Right | Jump highlight | Jump highlight | Load more when the page is full |
 
-File-open launches the desktop default handler (`xdg-open`) with the row's `absPath` (peek recents use `absPath`; search hits use `source.absPath`; browsed docs join `collection.path` + `source.relPath`). Explicit web-open (Ctrl+Enter / **w**) launches `omarchy-launch-browser` at `{serve.url}/doc?uri=<encodeURIComponent(uri)>`. If serve is down, that key shows a short non-blocking notice (`Web UI is down. Start it with: gno serve --detach`) and spawns nothing. A spawn failure of the opener is the same kind of notice; the overlay and panel stay interactive.
+File-open uses the row's `absPath` (peek recents use `absPath`; search hits use `source.absPath`; browsed docs join `collection.path` + `source.relPath`). With no `fileOpener` override, a login-shell trampoline (`bash -lc`, so **not** `.zshrc`) picks the handler: text-like files (`md`, `markdown`, `txt`, `org`, `rst`, `adoc`, `text`) honor `$VISUAL` when it is set in that environment (TUI editors such as nvim via `omarchy-launch-tui` so a terminal is visible; GUI editors via `uwsm-app`), otherwise **omawrite** on a stock Omarchy install, then `omarchy-launch-editor`, then `gio open` / `xdg-open`. Non-text files go straight to `gio open` (proper mime) or `xdg-open`. Raw `xdg-open` alone is what used to open markdown as headless nvim. Set `VISUAL` in a login-visible place (`~/.profile`, `.zprofile`, or uwsm env) if you want your editor to win for text docs. The `fileOpener` override still skips the chain. Explicit web-open (Ctrl+Enter / **w**) launches `omarchy-launch-browser` at `{serve.url}/doc?uri=<encodeURIComponent(uri)>`. If serve is down, that key shows a short non-blocking notice (`Web UI is down. Start it with: gno serve --detach`) and spawns nothing. A spawn failure of the opener is the same kind of notice; the overlay and panel stay interactive.
 
 Left-clicking the bar widget toggles the nested `Panel.qml` loader — it does not call that overlay IPC path. The anchored popup is not a manifest `panel` kind, so it cannot steal the overlay toggle.
 

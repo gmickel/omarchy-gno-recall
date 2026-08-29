@@ -105,7 +105,9 @@ Item {
   property bool lastOpenOk: false
   property string lastOpenMessage: ""
 
-  readonly property string defaultFileOpener: "xdg-open"
+  readonly property string defaultFileOpener: "VISUAL/omawrite (fallback gio/xdg-open)"
+  // Compile-time constant. Document path is argv $1 only (R7).
+  readonly property string defaultFileOpenScript: 'ext="${1##*.}"; ext=$(printf "%s" "$ext" | tr "[:upper:]" "[:lower:]"); case "$ext" in md|markdown|txt|org|rst|adoc|text) if [ -n "${VISUAL:-}" ]; then case "${VISUAL##*/}" in nvim|vim|vi|nano|micro|hx|helix|fresh|kak) exec omarchy-launch-tui "$VISUAL" "$1" ;; *) exec setsid uwsm-app -- "$VISUAL" "$1" ;; esac; elif command -v omawrite >/dev/null 2>&1; then exec setsid uwsm-app -- omawrite "$1"; elif command -v omarchy-launch-editor >/dev/null 2>&1; then exec omarchy-launch-editor "$1"; elif command -v gio >/dev/null 2>&1; then exec gio open "$1"; else exec xdg-open "$1"; fi ;; *) if command -v gio >/dev/null 2>&1; then exec gio open "$1"; else exec xdg-open "$1"; fi ;; esac'
   readonly property string defaultBrowserOpener: "omarchy-launch-browser"
   readonly property int actionStatusMs: 3000
 
@@ -1646,7 +1648,7 @@ Item {
 
   function detachOpen(argv) {
     // Login shell + constant `exec "$@"` — same argv-safe pattern as Util.execArgv.
-    // GUI handlers (xdg-open → typora) need the session PATH/env.
+    // GUI handlers (omawrite / gio / xdg-open) need the session PATH/env.
     Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "bash"].concat(argv))
   }
 
@@ -1685,7 +1687,9 @@ Item {
     var path = String(absPath || "").trim()
     if (path === "")
       return showMissingPathGuidance("file")
-    return launchArgv([resolveFileOpener(), path], "file")
+    if (fileOpenerOverride !== "")
+      return launchArgv([fileOpenerOverride, path], "file")
+    return launchArgv(["bash", "-lc", defaultFileOpenScript, "bash", path], "file")
   }
 
   function openDocument(row) {
