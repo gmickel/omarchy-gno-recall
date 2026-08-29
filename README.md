@@ -10,7 +10,7 @@ This repository is the plugin source. The bar widget is quiet when the index is 
 - [gno](https://github.com/gmickel/gno) **>= 1.36.0** on `PATH`, or an absolute path in the widget's **Path to gno** setting
 - A Nerd Font (Omarchy includes one by default)
 
-`gno peek --json` is the snapshot path. Committed overlay search is a second argv-array call: `gno search <query> --json --no-project-affinity -n 20`. Peek shipped in gno 1.36.0 (`schemaVersion` `peek@1.0`). Older gno builds fail discovery with an `unknown-command` state instead of crashing the shell. The plugin never calls `gno get` or `gno serve`.
+`gno peek --json` is the snapshot path. Committed overlay search is a second argv-array call: `gno search <query> --json --no-project-affinity -n 20`. Released gno 1.36.0 ships `gno peek` (`schemaVersion` `peek@1.0`) and the GNO web UI `/doc?uri=` deep link (plus `source.absPath` on search hits). Older gno builds fail discovery with an `unknown-command` state instead of crashing the shell. The plugin never calls `gno get` or `gno serve`.
 
 ## Privilege boundary
 
@@ -59,7 +59,7 @@ omarchy plugin remove gmickel.gno-recall
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| Path to gno (`gnoPath`) | empty | Absolute path to `gno`. Empty uses `PATH`. |
+| Path to gno (`gnoPath`) | empty | Absolute path to `gno` (>= 1.36.0). Empty uses `PATH`. |
 | Refresh interval (`refreshIntervalSec`) | 900 | Coarse poll interval in seconds (60–3600). |
 
 ```bash

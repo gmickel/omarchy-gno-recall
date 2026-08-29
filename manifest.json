@@ -35,7 +35,7 @@
         "type": "string",
         "label": "Path to gno",
         "defaultValue": "",
-        "description": "Absolute path to the gno binary. Leave empty to resolve gno from PATH."
+        "description": "Absolute path to gno >= 1.36.0 (peek@1.0 + /doc?uri= deep link). Leave empty to resolve gno from PATH."
       },
       {
         "key": "refreshIntervalSec",
