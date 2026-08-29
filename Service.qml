@@ -16,11 +16,14 @@ Item {
   readonly property string pluginId: "gmickel.gno-recall"
   readonly property string supportedGnoFloor: "1.36.0"
   readonly property string peekSchemaVersion: "peek@1.0"
+  readonly property string supportedPeekSchemaMajor: "peek@1.x"
   readonly property int maxPeekStdoutChars: 524288
   readonly property int maxSearchStdoutChars: 2097152
+  readonly property int maxProbeStdoutChars: 4096
   readonly property int probeTimeoutMs: 3000
   readonly property int peekTimeoutMs: 8000
   readonly property int searchTimeoutMs: 15000
+  readonly property int openProbeTimeoutMs: 3000
   readonly property int searchLimit: 20
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 900, 60, 3600)
 
@@ -85,6 +88,8 @@ Item {
   property string _stderr: ""
   property bool _started: false
   property bool _timedOut: false
+  property bool _probeOversized: false
+  property bool _peekOversized: false
   property bool _refreshQueued: false
   property int _runningPeekGen: 0
 
@@ -92,9 +97,11 @@ Item {
   property string _searchStderr: ""
   property bool _searchStarted: false
   property bool _searchTimedOut: false
+  property bool _searchOversized: false
   property int _runningSearchGen: 0
   property string _pendingSearchQuery: ""
   property int _pendingSearchGen: 0
+  property bool _openTimedOut: false
 
   function setting(name, fallback) {
     var fromProp = settings ? settings[name] : undefined
@@ -152,6 +159,35 @@ Item {
         return false
     }
     return true
+  }
+
+  function peekSchemaCompatible(schemaVersion) {
+    var text = String(schemaVersion || "")
+    if (text === peekSchemaVersion)
+      return true
+    return /^peek@1\.\d+$/.test(text)
+  }
+
+  function isFiniteNumber(value) {
+    return typeof value === "number" && isFinite(value)
+  }
+
+  function peekPayloadComplete(data) {
+    if (!data || typeof data.initialized !== "boolean")
+      return false
+    if (data.initialized !== true)
+      return true
+    var counts = data.counts
+    var backlog = data.backlog
+    if (!counts || typeof counts !== "object")
+      return false
+    if (!isFiniteNumber(counts.documents) || !isFiniteNumber(counts.collections))
+      return false
+    if (!backlog || typeof backlog !== "object")
+      return false
+    if (!isFiniteNumber(backlog.pending) || !isFiniteNumber(backlog.failed))
+      return false
+    return Array.isArray(data.recent)
   }
 
   function parseJsonObject(raw) {
@@ -301,6 +337,92 @@ Item {
     return true
   }
 
+  function accumulateBounded(current, chunk, limit) {
+    var piece = String(chunk || "")
+    if (current.length + piece.length > limit)
+      return null
+    return current + piece
+  }
+
+  function takeProbeOutput(chunk, isStderr) {
+    if (_probeOversized)
+      return
+    var current = isStderr ? _stderr : _stdout
+    var next = accumulateBounded(current, chunk, maxProbeStdoutChars)
+    if (next === null) {
+      killProbeForOversized()
+      return
+    }
+    if (isStderr)
+      _stderr = next
+    else
+      _stdout = next
+  }
+
+  function takePeekOutput(chunk, isStderr) {
+    if (_peekOversized)
+      return
+    var current = isStderr ? _stderr : _stdout
+    var next = accumulateBounded(current, chunk, maxPeekStdoutChars)
+    if (next === null) {
+      killPeekForOversized()
+      return
+    }
+    if (isStderr)
+      _stderr = next
+    else
+      _stdout = next
+  }
+
+  function takeSearchOutput(chunk, isStderr) {
+    if (_searchOversized)
+      return
+    var current = isStderr ? _searchStderr : _searchStdout
+    var next = accumulateBounded(current, chunk, maxSearchStdoutChars)
+    if (next === null) {
+      killSearchForOversized()
+      return
+    }
+    if (isStderr)
+      _searchStderr = next
+    else
+      _searchStdout = next
+  }
+
+  function signalAndForceKill(proc, forceTimer) {
+    if (!proc.running)
+      return
+    proc.signal(15)
+    forceTimer.restart()
+  }
+
+  function killProbeForOversized() {
+    if (_probeOversized)
+      return
+    _probeOversized = true
+    console.info("gmickel.gno-recall: probe oversized bound=" + maxProbeStdoutChars)
+    probeKillTimer.stop()
+    signalAndForceKill(probeProcess, probeForceKillTimer)
+  }
+
+  function killPeekForOversized() {
+    if (_peekOversized)
+      return
+    _peekOversized = true
+    console.info("gmickel.gno-recall: peek oversized bound=" + maxPeekStdoutChars)
+    peekKillTimer.stop()
+    signalAndForceKill(peekProcess, peekForceKillTimer)
+  }
+
+  function killSearchForOversized() {
+    if (_searchOversized)
+      return
+    _searchOversized = true
+    console.info("gmickel.gno-recall: search oversized bound=" + maxSearchStdoutChars)
+    searchKillTimer.stop()
+    signalAndForceKill(searchProcess, searchForceKillTimer)
+  }
+
   function refresh() {
     if (probeProcess.running || peekProcess.running) {
       _refreshQueued = true
@@ -338,6 +460,7 @@ Item {
     _phase = phase
     _started = false
     _timedOut = false
+    _probeOversized = false
     _stdout = ""
     _stderr = ""
     probeProcess.command = argv
@@ -350,6 +473,7 @@ Item {
     _phase = "peek"
     _started = false
     _timedOut = false
+    _peekOversized = false
     _stdout = ""
     _stderr = ""
     peekProcess.command = [gnoPath, "peek", "--json"]
@@ -375,7 +499,14 @@ Item {
       finishIdle()
       return
     }
-    var stdout = String(probeStdout.text || _stdout || "").trim()
+    var stdout = String(_stdout || "").trim()
+    if (_probeOversized) {
+      dropLiveSnapshot()
+      loading = false
+      setState(stateSpawnFailure, "gno discovery output exceeded the size bound")
+      finishIdle()
+      return
+    }
     if (_timedOut) {
       dropLiveSnapshot()
       loading = false
@@ -445,8 +576,8 @@ Item {
     peekKillTimer.stop()
     peekForceKillTimer.stop()
     var finishedGen = _runningPeekGen
-    var stdout = String(peekStdout.text || _stdout || "")
-    var stderr = String(peekStderr.text || _stderr || "")
+    var stdout = String(_stdout || "")
+    var stderr = String(_stderr || "")
     loading = false
 
     if (peekGenIsStale(finishedGen)) {
@@ -466,7 +597,8 @@ Item {
       finishIdle()
       return
     }
-    if (!stdoutWithinBound(stdout, maxPeekStdoutChars, "peek")
+    if (_peekOversized
+        || !stdoutWithinBound(stdout, maxPeekStdoutChars, "peek")
         || !stdoutWithinBound(stderr, maxPeekStdoutChars, "peek-stderr")) {
       dropLiveSnapshot()
       setState(stateMalformedJson, "gno peek output exceeded the size bound")
@@ -494,6 +626,19 @@ Item {
     if (!data || typeof data.schemaVersion !== "string" || typeof data.gnoVersion !== "string") {
       dropLiveSnapshot()
       setState(stateMalformedJson, "gno peek returned unreadable or incomplete JSON")
+      finishIdle()
+      return
+    }
+    if (!peekSchemaCompatible(data.schemaVersion)) {
+      dropLiveSnapshot()
+      setState(stateVersionSkew, "gno peek schema " + data.schemaVersion
+        + " is unsupported; plugin supports " + supportedPeekSchemaMajor)
+      finishIdle()
+      return
+    }
+    if (!peekPayloadComplete(data)) {
+      dropLiveSnapshot()
+      setState(stateMalformedJson, "gno peek returned an incomplete peek@1.0 payload")
       finishIdle()
       return
     }
@@ -610,6 +755,7 @@ Item {
     _pendingSearchGen = 0
     _searchStarted = false
     _searchTimedOut = false
+    _searchOversized = false
     _searchStdout = ""
     _searchStderr = ""
     searchKillTimer.stop()
@@ -646,14 +792,16 @@ Item {
     var finishedGen = _runningSearchGen
     var pendingQuery = _pendingSearchQuery
     var pendingGen = _pendingSearchGen
-    var stdout = String(searchStdout.text || _searchStdout || "")
-    var stderr = String(searchStderr.text || _searchStderr || "")
+    var stdout = String(_searchStdout || "")
+    var stderr = String(_searchStderr || "")
     var timedOut = _searchTimedOut
     var started = _searchStarted
+    var oversized = _searchOversized
     _runningSearchGen = 0
     _pendingSearchQuery = ""
     _pendingSearchGen = 0
     _searchTimedOut = false
+    _searchOversized = false
 
     if (pendingQuery !== "" && pendingGen === searchGenerationId) {
       console.info("gmickel.gno-recall: search late-drop gen=" + finishedGen
@@ -687,7 +835,8 @@ Item {
       console.info("gmickel.gno-recall: search spawn-failure gen=" + finishedGen)
       return
     }
-    if (!stdoutWithinBound(stdout, maxSearchStdoutChars, "search")
+    if (oversized
+        || !stdoutWithinBound(stdout, maxSearchStdoutChars, "search")
         || !stdoutWithinBound(stderr, maxSearchStdoutChars, "search-stderr")) {
       searchResults = []
       searchHitCount = 0
@@ -822,6 +971,7 @@ Item {
     }
 
     _openStarted = false
+    _openTimedOut = false
     _openKind = lastOpenKind
     _pendingOpenArgv = list
     _pendingOpenKind = lastOpenKind
@@ -831,6 +981,8 @@ Item {
     else
       openProbeProcess.command = ["/usr/bin/which", binary]
     openProbeProcess.running = true
+    openProbeKillTimer.interval = openProbeTimeoutMs
+    openProbeKillTimer.restart()
     return true
   }
 
@@ -841,11 +993,15 @@ Item {
   }
 
   function handleOpenProbe(exitCode) {
+    openProbeKillTimer.stop()
+    openProbeForceKillTimer.stop()
     var argv = _pendingOpenArgv
     var kind = _pendingOpenKind
+    var timedOut = _openTimedOut
     _pendingOpenArgv = []
     _pendingOpenKind = ""
-    if (!_openStarted || exitCode !== 0) {
+    _openTimedOut = false
+    if (timedOut || !_openStarted || exitCode !== 0) {
       finishOpenFailure("Could not start " + (kind || "file") + " opener")
       return
     }
@@ -927,6 +1083,14 @@ Item {
     searchForceKillTimer.restart()
   }
 
+  function killOpenProbeProcess() {
+    if (!openProbeProcess.running)
+      return
+    _openTimedOut = true
+    openProbeProcess.signal(15)
+    openProbeForceKillTimer.restart()
+  }
+
   Timer {
     interval: root.refreshIntervalSec * 1000
     repeat: true
@@ -978,6 +1142,20 @@ Item {
   }
 
   Timer {
+    id: openProbeKillTimer
+    interval: root.openProbeTimeoutMs
+    repeat: false
+    onTriggered: root.killOpenProbeProcess()
+  }
+
+  Timer {
+    id: openProbeForceKillTimer
+    interval: 1000
+    repeat: false
+    onTriggered: if (openProbeProcess.running) openProbeProcess.signal(9)
+  }
+
+  Timer {
     id: actionStatusTimer
     interval: root.actionStatusMs
     repeat: false
@@ -988,15 +1166,13 @@ Item {
     id: probeProcess
     running: false
     command: []
-    stdout: StdioCollector {
-      id: probeStdout
-      waitForEnd: true
-      onStreamFinished: root._stdout = text
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { root.takeProbeOutput(data, false) }
     }
-    stderr: StdioCollector {
-      id: probeStderr
-      waitForEnd: true
-      onStreamFinished: root._stderr = text
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { root.takeProbeOutput(data, true) }
     }
     onStarted: root._started = true
     onRunningChanged: {
@@ -1022,15 +1198,13 @@ Item {
     id: peekProcess
     running: false
     command: []
-    stdout: StdioCollector {
-      id: peekStdout
-      waitForEnd: true
-      onStreamFinished: root._stdout = text
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { root.takePeekOutput(data, false) }
     }
-    stderr: StdioCollector {
-      id: peekStderr
-      waitForEnd: true
-      onStreamFinished: root._stderr = text
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { root.takePeekOutput(data, true) }
     }
     onStarted: root._started = true
     onRunningChanged: {
@@ -1056,15 +1230,13 @@ Item {
     id: searchProcess
     running: false
     command: []
-    stdout: StdioCollector {
-      id: searchStdout
-      waitForEnd: true
-      onStreamFinished: root._searchStdout = text
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { root.takeSearchOutput(data, false) }
     }
-    stderr: StdioCollector {
-      id: searchStderr
-      waitForEnd: true
-      onStreamFinished: root._searchStderr = text
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { root.takeSearchOutput(data, true) }
     }
     onStarted: root._searchStarted = true
     onRunningChanged: {
@@ -1085,9 +1257,12 @@ Item {
     onStarted: root._openStarted = true
     onRunningChanged: {
       if (!running && !root._openStarted && root._pendingOpenArgv && root._pendingOpenArgv.length > 0) {
+        openProbeKillTimer.stop()
+        openProbeForceKillTimer.stop()
         root.finishOpenFailure("Could not start " + (root._pendingOpenKind || "file") + " opener")
         root._pendingOpenArgv = []
         root._pendingOpenKind = ""
+        root._openTimedOut = false
       }
     }
     onExited: function(exitCode) {
