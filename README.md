@@ -10,7 +10,7 @@ This repository is the plugin source. The bar widget is quiet when the index is 
 - [gno](https://github.com/gmickel/gno) **>= 1.36.0** on `PATH`, or an absolute path in the widget's **Path to gno** setting
 - A Nerd Font (Omarchy includes one by default)
 
-`gno peek --json` is the snapshot path. Committed overlay search is a second argv-array call: `gno search <query> --json --no-project-affinity -n 20`. Collection browse uses `gno status --json` (collections list) and `gno ls <collection> --json -n 50 --offset <n>` (paginated documents). Released gno 1.36.0 ships `gno peek` (`schemaVersion` `peek@1.0`) and the GNO web UI `/doc?uri=` deep link (plus `source.absPath` on search hits). Older gno builds fail discovery with an `unknown-command` state instead of crashing the shell. The plugin never calls `gno get` or `gno serve`.
+`gno peek --json` is the snapshot path. Committed overlay search is a second argv-array call: `gno search <query> --json --no-project-affinity -n 20` (BM25). Shift+Enter runs a deeper hybrid pass: `gno query <query> --json --no-project-affinity -n 20` at balanced depth (embeddings + expansion + rerank; no `--depth` flag). Collection browse uses `gno status --json` (collections list) and `gno ls <collection> --json -n 50 --offset <n>` (paginated documents). Released gno 1.36.0 ships `gno peek` (`schemaVersion` `peek@1.0`) and the GNO web UI `/doc?uri=` deep link (plus `source.absPath` on search hits). Older gno builds fail discovery with an `unknown-command` state instead of crashing the shell. The plugin never calls `gno get` or `gno serve`.
 
 ## Privilege boundary
 
@@ -90,7 +90,7 @@ The last-good peek snapshot (titles, paths, snippets, and the last successful se
 
 `Service.qml` is the only `Process` owner. It resolves `gno` from the widget `gnoPath` (absolute) or `PATH`, then invokes `gno peek --json` as an argv array via `Quickshell.Io.Process` + `SplitParser` (empty `splitMarker`, raw-chunk accumulation with a 512KiB kill bound). Bar and overlay surfaces look the service up with `bar.shell.serviceFor("gmickel.gno-recall")` — third-party plugins must not use `firstPartyServiceFor`.
 
-The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). It opens on the focused monitor, grabs exclusive keyboard focus, and shows cached peek `recent[]` immediately. Typing filters titles and URI tails in memory — no `gno` subprocess per keystroke. Enter on a query (before results land) runs exactly one search through `Service.qml`; a new Enter or a query change cancels the in-flight Process and drops late JSON via a search generation id.
+The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). It opens on the focused monitor, grabs exclusive keyboard focus, and shows cached peek `recent[]` immediately. Typing filters titles and URI tails in memory — no `gno` subprocess per keystroke. Enter on a query (before results land) runs exactly one BM25 search through `Service.qml`; Shift+Enter runs the slower hybrid `gno query` instead (visible “Deep searching…” copy, then “N deep hits”). A new Enter, Shift+Enter, Esc, or a query change cancels the in-flight Process and drops late JSON via one shared search generation id, so a late deep result cannot clobber a newer fast search.
 
 **Browse collections** is a second overlay mode. From recents, **Tab** (or **Ctrl+B**) lists every collection from `gno status --json` (name + document count). Enter drills into a paginated `gno ls` document list (50 per page). A **Load more…** row (Enter, Right, or Page Down at the end) appends the next offset. Typing still filters in memory only — collection names on the list, already-loaded document titles/paths inside a collection. Esc walks back one step at a time: clear filter → documents back to collections → collections back to recents → dismiss via `shell.hide`. Backspace with an empty filter also steps back a browse level without dismissing.
 
@@ -150,7 +150,8 @@ Both the overlay rows and the panel recents list share `Service.qml`'s `openDocu
 | Key | Recents | Collections | Documents |
 | --- | --- | --- | --- |
 | Type / Backspace | Filter recents in memory | Filter collection names | Filter loaded rows |
-| Enter | Search if a filter is typed; otherwise open the document | Open the highlighted collection | Open the document (or load the next page on **Load more…**) |
+| Enter | Search (BM25) if a filter is typed; otherwise open the document | Open the highlighted collection | Open the document (or load the next page on **Load more…**) |
+| Shift+Enter | Deep search (`gno query`, balanced hybrid) if a filter is typed; no-op on an empty query | — | — |
 | Ctrl+Enter | Open web UI | — | Open web UI |
 | Tab / Ctrl+B | Switch to collections | — | — |
 | Esc | Clear filter, then dismiss | Clear filter, then back to recents | Clear filter, then back to collections |

@@ -25,6 +25,7 @@ Item {
   readonly property int probeTimeoutMs: 3000
   readonly property int peekTimeoutMs: 8000
   readonly property int searchTimeoutMs: 15000
+  readonly property int deepSearchTimeoutMs: 90000
   readonly property int statusTimeoutMs: 8000
   readonly property int lsTimeoutMs: 8000
   readonly property int openProbeTimeoutMs: 3000
@@ -65,6 +66,7 @@ Item {
 
   property string searchState: "idle"
   property string searchQuery: ""
+  property string searchMode: ""
   property string searchMessage: ""
   property var searchResults: []
   property int searchGenerationId: 0
@@ -133,8 +135,10 @@ Item {
   property bool _searchTimedOut: false
   property bool _searchOversized: false
   property int _runningSearchGen: 0
+  property bool _runningSearchDeep: false
   property string _pendingSearchQuery: ""
   property int _pendingSearchGen: 0
+  property bool _pendingSearchDeep: false
   property bool _openTimedOut: false
 
   property string _statusStdout: ""
@@ -328,11 +332,13 @@ Item {
       panelOpened: panelOpened === true,
       searchState: searchState,
       searchQuery: searchQuery,
+      searchMode: searchMode,
       searchMessage: searchMessage,
       searchGenerationId: searchGenerationId,
       searchHitCount: searchHitCount,
       searchLoading: searchLoading === true,
       searchLimit: searchLimit,
+      deepSearchTimeoutMs: deepSearchTimeoutMs,
       firstSearchUri: searchResults && searchResults.length > 0 ? String(searchResults[0].uri || "") : "",
       collectionsState: collectionsState,
       collectionsMessage: collectionsMessage,
@@ -798,10 +804,20 @@ Item {
     return slash >= 0 ? rest.slice(0, slash) : rest
   }
 
+  function searchHitsArray(data) {
+    if (!data)
+      return null
+    if (Array.isArray(data.results))
+      return data.results
+    if (Array.isArray(data.hits))
+      return data.hits
+    return null
+  }
+
   function normalizeSearchHits(data) {
-    var hits = data && data.results ? data.results : []
+    var hits = searchHitsArray(data)
     var rows = []
-    if (!Array.isArray(hits))
+    if (!hits)
       return rows
     for (var i = 0; i < hits.length; i++) {
       var hit = hits[i]
@@ -830,6 +846,7 @@ Item {
     searchGenerationId += 1
     _pendingSearchQuery = ""
     _pendingSearchGen = 0
+    _pendingSearchDeep = false
     searchKillTimer.stop()
     if (searchProcess.running) {
       _searchTimedOut = false
@@ -844,43 +861,57 @@ Item {
       searchMessage = ""
       searchResults = []
       searchHitCount = 0
+      searchMode = ""
     }
     console.info("gmickel.gno-recall: search cancelled gen=" + searchGenerationId
       + " reason=" + String(reason || "cancel")
       + " dropped=" + _runningSearchGen)
   }
 
-  function runSearch(query) {
+  function runDeepSearch(query) {
+    runSearch(query, true)
+  }
+
+  function runSearch(query, deep) {
     var q = String(query || "").trim()
     if (q === "")
       return
+    var isDeep = deep === true
     searchGenerationId += 1
     var gen = searchGenerationId
     searchQuery = q
+    searchMode = isDeep ? "deep" : "bm25"
     searchMessage = ""
     searchResults = []
     searchHitCount = 0
     searchLoading = true
     searchState = searchStateLoading
     _searchTimedOut = false
-    console.info("gmickel.gno-recall: search request gen=" + gen + " query=" + q)
+    console.info("gmickel.gno-recall: search request gen=" + gen
+      + " mode=" + searchMode
+      + " query=" + q)
 
     if (searchProcess.running) {
       _pendingSearchQuery = q
       _pendingSearchGen = gen
+      _pendingSearchDeep = isDeep
       searchProcess.signal(15)
       searchForceKillTimer.restart()
       console.info("gmickel.gno-recall: search cancel-inflight running=" + _runningSearchGen
-        + " pending=" + gen)
+        + " pending=" + gen
+        + " pendingMode=" + (isDeep ? "deep" : "bm25"))
       return
     }
-    startSearchProcess(q, gen)
+    startSearchProcess(q, gen, isDeep)
   }
 
-  function startSearchProcess(query, gen) {
+  function startSearchProcess(query, gen, deep) {
+    var isDeep = deep === true
     _runningSearchGen = gen
+    _runningSearchDeep = isDeep
     _pendingSearchQuery = ""
     _pendingSearchGen = 0
+    _pendingSearchDeep = false
     _searchStarted = false
     _searchTimedOut = false
     _searchOversized = false
@@ -893,13 +924,16 @@ Item {
       searchLoading = false
       searchState = searchStateError
       searchMessage = "gno path is not resolved"
-      console.info("gmickel.gno-recall: search error gen=" + gen + " message=" + searchMessage)
+      console.info("gmickel.gno-recall: search error gen=" + gen
+        + " mode=" + (isDeep ? "deep" : "bm25")
+        + " message=" + searchMessage)
       return
     }
 
+    var verb = isDeep ? "query" : "search"
     searchProcess.command = [
       resolvedGnoPath,
-      "search",
+      verb,
       query,
       "--json",
       "--no-project-affinity",
@@ -907,10 +941,11 @@ Item {
       String(searchLimit)
     ]
     searchProcess.running = true
-    searchKillTimer.interval = searchTimeoutMs
+    searchKillTimer.interval = isDeep ? deepSearchTimeoutMs : searchTimeoutMs
     searchKillTimer.restart()
     console.info("gmickel.gno-recall: search start gen=" + gen
-      + " argv=[" + resolvedGnoPath + ", search, <query>, --json, --no-project-affinity, -n, "
+      + " mode=" + (isDeep ? "deep" : "bm25")
+      + " argv=[" + resolvedGnoPath + ", " + verb + ", <query>, --json, --no-project-affinity, -n, "
       + searchLimit + "]")
   }
 
@@ -918,29 +953,37 @@ Item {
     searchKillTimer.stop()
     searchForceKillTimer.stop()
     var finishedGen = _runningSearchGen
+    var finishedDeep = _runningSearchDeep === true
     var pendingQuery = _pendingSearchQuery
     var pendingGen = _pendingSearchGen
+    var pendingDeep = _pendingSearchDeep === true
     var stdout = String(_searchStdout || "")
     var stderr = String(_searchStderr || "")
     var timedOut = _searchTimedOut
     var started = _searchStarted
     var oversized = _searchOversized
+    var finishedMode = finishedDeep ? "deep" : "bm25"
     _runningSearchGen = 0
+    _runningSearchDeep = false
     _pendingSearchQuery = ""
     _pendingSearchGen = 0
+    _pendingSearchDeep = false
     _searchTimedOut = false
     _searchOversized = false
 
     if (pendingQuery !== "" && pendingGen === searchGenerationId) {
       console.info("gmickel.gno-recall: search late-drop gen=" + finishedGen
+        + " mode=" + finishedMode
         + " current=" + searchGenerationId
-        + " starting pending gen=" + pendingGen)
-      startSearchProcess(pendingQuery, pendingGen)
+        + " starting pending gen=" + pendingGen
+        + " pendingMode=" + (pendingDeep ? "deep" : "bm25"))
+      startSearchProcess(pendingQuery, pendingGen, pendingDeep)
       return
     }
 
     if (finishedGen !== searchGenerationId) {
       console.info("gmickel.gno-recall: search late-drop gen=" + finishedGen
+        + " mode=" + finishedMode
         + " current=" + searchGenerationId)
       return
     }
@@ -951,16 +994,18 @@ Item {
       searchResults = []
       searchHitCount = 0
       searchState = searchStateTimeout
-      searchMessage = "Search timed out"
-      console.info("gmickel.gno-recall: search timeout gen=" + finishedGen)
+      searchMessage = finishedDeep ? "Deep search timed out" : "Search timed out"
+      console.info("gmickel.gno-recall: search timeout gen=" + finishedGen
+        + " mode=" + finishedMode)
       return
     }
     if (!started) {
       searchResults = []
       searchHitCount = 0
       searchState = searchStateError
-      searchMessage = "Failed to start gno search"
-      console.info("gmickel.gno-recall: search spawn-failure gen=" + finishedGen)
+      searchMessage = finishedDeep ? "Failed to start gno query" : "Failed to start gno search"
+      console.info("gmickel.gno-recall: search spawn-failure gen=" + finishedGen
+        + " mode=" + finishedMode)
       return
     }
     if (oversized
@@ -969,8 +1014,12 @@ Item {
       searchResults = []
       searchHitCount = 0
       searchState = searchStateError
-      searchMessage = "gno search output exceeded the size bound"
-      console.info("gmickel.gno-recall: search error gen=" + finishedGen + " message=" + searchMessage)
+      searchMessage = finishedDeep
+        ? "gno query output exceeded the size bound"
+        : "gno search output exceeded the size bound"
+      console.info("gmickel.gno-recall: search error gen=" + finishedGen
+        + " mode=" + finishedMode
+        + " message=" + searchMessage)
       return
     }
 
@@ -979,19 +1028,24 @@ Item {
       searchResults = []
       searchHitCount = 0
       searchState = searchStateError
-      searchMessage = errorDetail(errObj, stderr, stdout, "gno search failed")
+      searchMessage = errorDetail(errObj, stderr, stdout,
+        finishedDeep ? "gno query failed" : "gno search failed")
       console.info("gmickel.gno-recall: search error gen=" + finishedGen
+        + " mode=" + finishedMode
         + " exit=" + exitCode + " message=" + searchMessage)
       return
     }
 
     var data = parseJsonObject(stdout)
-    if (!data || !Array.isArray(data.results)) {
+    if (!data || searchHitsArray(data) === null) {
       searchResults = []
       searchHitCount = 0
       searchState = searchStateError
-      searchMessage = "gno search returned unreadable or incomplete JSON"
-      console.info("gmickel.gno-recall: search malformed-json gen=" + finishedGen)
+      searchMessage = finishedDeep
+        ? "gno query returned unreadable or incomplete JSON"
+        : "gno search returned unreadable or incomplete JSON"
+      console.info("gmickel.gno-recall: search malformed-json gen=" + finishedGen
+        + " mode=" + finishedMode)
       return
     }
 
@@ -1001,6 +1055,7 @@ Item {
     searchMessage = ""
     searchState = rows.length === 0 ? searchStateEmpty : searchStateReady
     console.info("gmickel.gno-recall: search ok gen=" + finishedGen
+      + " mode=" + finishedMode
       + " hits=" + rows.length
       + " first=" + (rows.length > 0 ? rows[0].uri : ""))
   }

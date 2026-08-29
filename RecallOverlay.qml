@@ -47,6 +47,7 @@ Item {
   readonly property string searchState: service ? String(service.searchState || "idle") : "idle"
   readonly property bool searchLoading: service ? service.searchLoading === true : false
   readonly property string searchQuery: service ? String(service.searchQuery || "") : ""
+  readonly property string searchMode: service ? String(service.searchMode || "") : ""
   readonly property string searchMessage: service ? String(service.searchMessage || "") : ""
   readonly property int searchGenerationId: service ? (service.searchGenerationId || 0) : 0
   readonly property int searchHitCount: service ? (service.searchHitCount || 0) : 0
@@ -525,18 +526,22 @@ Item {
     if (isStale)
       return "Showing last good · " + cacheAgeLabel()
     if (showingSearch && searchState === "loading")
-      return "Searching…"
+      return searchMode === "deep"
+        ? "Deep searching… (embeddings + rerank)"
+        : "Searching…"
     if (showingSearch && searchState === "ready")
-      return searchHitCount + " results"
+      return searchMode === "deep"
+        ? searchHitCount + " deep hits"
+        : searchHitCount + " results"
     if (showingSearch && searchState === "empty")
-      return "No results"
+      return searchMode === "deep" ? "No deep hits" : "No results"
     if (showingSearch && (searchState === "error" || searchState === "timeout"))
       return searchMessage !== "" ? searchMessage : (searchState === "timeout" ? "Search timed out" : "Search failed")
     if (filterText.trim() !== "")
-      return "Filtered recents — Enter to search · Tab collections"
+      return "Filtered recents — Enter to search · Shift+Enter deep · Tab collections"
     var recents = cachedRecents().length
     return recents > 0
-      ? recents + " recent · Tab collections · Enter opens · Ctrl+Enter web"
+      ? recents + " recent · Tab collections · Enter opens · Shift+Enter deep · Ctrl+Enter web"
       : "Tab to browse collections"
   }
 
@@ -559,7 +564,9 @@ Item {
         + (searchMessage !== "" ? "\n\n" + searchMessage : "")
         + "\n\nThe overlay is still open — edit the query and press Enter to try again."
     if (emptyKind === "search-loading")
-      return "Searching…"
+      return searchMode === "deep"
+        ? "Deep searching… (embeddings + rerank)"
+        : "Searching…"
     if (emptyKind === "collections-loading")
       return "Loading collections…"
     if (emptyKind === "collections-empty")
@@ -665,6 +672,20 @@ Item {
     root.cursorActive = true
     root.selectedIndex = 0
     service.runSearch(q)
+    root.rebuildDisplay()
+  }
+
+  function commitDeepSearch() {
+    if (root.inBrowse)
+      return
+    var q = root.filterText.trim()
+    if (q === "")
+      return
+    if (!service || typeof service.runDeepSearch !== "function")
+      return
+    root.cursorActive = true
+    root.selectedIndex = 0
+    service.runDeepSearch(q)
     root.rebuildDisplay()
   }
 
@@ -807,6 +828,7 @@ Item {
     base.cacheAge = root.cacheAgeLabel()
     base.filterText = root.filterText
     base.showingSearch = root.showingSearch
+    base.searchMode = root.searchMode
     base.emptyKind = root.emptyKind
     base.selectedIndex = root.selectedIndex
     base.rowCount = displayModel.count
@@ -962,6 +984,8 @@ Item {
             if (event.modifiers & Qt.ControlModifier) {
               if (displayModel.count > 0)
                 root.openWebAt(root.selectedIndex)
+            } else if (event.modifiers & Qt.ShiftModifier) {
+              root.commitDeepSearch()
             } else if (root.inBrowse) {
               if (displayModel.count > 0)
                 root.activateIndex(root.selectedIndex)
