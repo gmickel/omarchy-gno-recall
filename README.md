@@ -2,7 +2,7 @@
 
 An [Omarchy](https://omarchy.org/) shell plugin that surfaces [GNO](https://gno.sh) index activity from the bar.
 
-This repository is the plugin source. The bar widget is quiet when the index is healthy (a history glyph only) and adds a distinct shape plus color when there is backlog, staleness, or a setup/degraded fault. Later work fills the anchored popup and overlay.
+This repository is the plugin source. The bar widget is quiet when the index is healthy (a history glyph only) and adds a distinct shape plus color when there is backlog, staleness, or a setup/degraded fault. Left-click opens an anchored index panel; Super+R (later) or **Recall search** summons the overlay.
 
 ## Requirements
 
@@ -94,7 +94,11 @@ Every state pairs a different glyph or badge **shape** with a theme color (`Colo
 | Init guidance | Peek succeeded with `initialized: false` | Plus |
 | Degraded | `runtime-error` (peek `RUNTIME` envelope) / `timeout` / `malformed-json` / `spawn-failure` | Warning triangle |
 
-Hover the widget for a short accessible status line. Middle-click refreshes the peek snapshot.
+Hover the widget for a short accessible status line. Middle-click refreshes the peek snapshot. Left-click opens the anchored panel: health line, document/collection counts, backlog, last-indexed time, and recent titles (URI-tail fallback when title is null). Escape closes it. Arrow keys move the highlight across recents and the footer actions.
+
+The panel never starts `gno serve`. **Open GNO web UI** is enabled only when peek reports `serve.running`; otherwise it stays disabled with `start: gno serve --detach`. **Recall search** toggles the overlay via `omarchy-shell shell toggle gmickel.gno-recall`.
+
+When peek has nothing to list, the panel shows one of three copy blocks instead of going blank: run `gno init` (uninitialized), add documents (initialized but empty), or setup/degraded guidance with the service error message.
 
 ## License
 

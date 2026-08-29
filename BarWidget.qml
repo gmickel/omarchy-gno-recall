@@ -49,6 +49,10 @@ BarWidget {
     svc.panelOpened = opened
   }
 
+  // Nested KeyboardPanel identity: the bar's popout coordinator and
+  // switchPanelFrom compare against this widget, so hostWidget is the
+  // slot identity. manageIpc stays false on Panel.qml — overlay owns
+  // `omarchy-shell shell toggle gmickel.gno-recall`.
   function injectPanel() {
     var target = panelLoader.item
     if (!target)
