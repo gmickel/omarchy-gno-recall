@@ -142,6 +142,8 @@ Panel {
   }
 
   function cacheStamp() {
+    if (service && service.lastSuccessfulRefreshAt)
+      return String(service.lastSuccessfulRefreshAt)
     if (service && service.lastPeekAt)
       return String(service.lastPeekAt)
     if (displaySnapshot && displaySnapshot.generatedAt)
@@ -150,6 +152,8 @@ Panel {
   }
 
   function cacheAgeLabel() {
+    if (service && typeof service.cacheAgeLabel === "function")
+      return service.cacheAgeLabel()
     var rel = relativeTime(cacheStamp())
     return rel !== "" ? rel : "last good snapshot"
   }

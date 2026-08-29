@@ -111,17 +111,18 @@ BarWidget {
 
   function resolveVisualKind() {
     var st = serviceState
-    if (st === "not-found" || st === "not-executable" || st === "version-skew" || st === "unknown-command")
-      return "setup-guidance"
     if (st === "ready" && displaySnapshot && displaySnapshot.initialized === false)
       return "init-guidance"
-    if (st === "runtime-error" || st === "timeout" || st === "malformed-json" || st === "spawn-failure") {
+    if (st === "not-found" || st === "not-executable" || st === "version-skew" || st === "unknown-command"
+        || st === "runtime-error" || st === "timeout" || st === "malformed-json" || st === "spawn-failure") {
       if (isStale && lastGood && lastGood.initialized === true)
         return lastGood.backlog && parseInt(lastGood.backlog.failed, 10) > 0
           ? "backlog-failed"
           : (lastGood.backlog && parseInt(lastGood.backlog.pending, 10) > 0 ? "backlog-pending" : "stale")
       if (isStale && lastGood && lastGood.initialized === false)
         return "init-guidance"
+      if (st === "not-found" || st === "not-executable" || st === "version-skew" || st === "unknown-command")
+        return "setup-guidance"
       return "degraded"
     }
     if (st === "loading" && !displaySnapshot)

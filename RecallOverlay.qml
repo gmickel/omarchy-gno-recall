@@ -185,6 +185,18 @@ Item {
     return text !== "" ? text : ""
   }
 
+  function cacheAgeLabel() {
+    if (service && typeof service.cacheAgeLabel === "function")
+      return service.cacheAgeLabel()
+    var stamp = ""
+    if (service && service.lastSuccessfulRefreshAt)
+      stamp = String(service.lastSuccessfulRefreshAt)
+    else if (service && service.lastPeekAt)
+      stamp = String(service.lastPeekAt)
+    var rel = relativeTime(stamp)
+    return rel !== "" ? rel : "last good snapshot"
+  }
+
   function rowMatchesFilter(row, needle) {
     if (needle === "")
       return true
@@ -253,7 +265,7 @@ Item {
     if (actionStatus !== "")
       return actionStatus
     if (isStale)
-      return "Showing last good snapshot"
+      return "Showing last good · " + cacheAgeLabel()
     if (showingSearch && searchState === "loading")
       return "Searching…"
     if (showingSearch && searchState === "ready")
@@ -467,6 +479,8 @@ Item {
     var selected = rowAt(root.selectedIndex)
     base.overlayOpened = root.opened
     base.panelOpened = service ? service.panelOpened === true : false
+    base.statusLine = root.statusLine
+    base.cacheAge = root.cacheAgeLabel()
     base.filterText = root.filterText
     base.showingSearch = root.showingSearch
     base.emptyKind = root.emptyKind

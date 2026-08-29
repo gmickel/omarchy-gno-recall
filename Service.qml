@@ -16,7 +16,8 @@ Item {
   readonly property string pluginId: "gmickel.gno-recall"
   readonly property string supportedGnoFloor: "1.36.0"
   readonly property string peekSchemaVersion: "peek@1.0"
-  readonly property int maxStdoutChars: 262144
+  readonly property int maxPeekStdoutChars: 524288
+  readonly property int maxSearchStdoutChars: 2097152
   readonly property int probeTimeoutMs: 3000
   readonly property int peekTimeoutMs: 8000
   readonly property int searchTimeoutMs: 15000
@@ -46,10 +47,13 @@ Item {
   property var snapshot: null
   property var lastGoodSnapshot: null
   property int generationId: 0
+  property int peekGenerationId: 0
   property bool loading: false
   property bool panelOpened: false
   property string lastPeekAt: ""
+  property string lastSuccessfulRefreshAt: ""
   readonly property bool stale: snapshot === null && lastGoodSnapshot !== null
+  readonly property bool refreshQueued: _refreshQueued === true
 
   property string searchState: "idle"
   property string searchQuery: ""
@@ -82,6 +86,7 @@ Item {
   property bool _started: false
   property bool _timedOut: false
   property bool _refreshQueued: false
+  property int _runningPeekGen: 0
 
   property string _searchStdout: ""
   property string _searchStderr: ""
@@ -187,18 +192,44 @@ Item {
       + (message !== "" ? " message=" + message : ""))
   }
 
+  function cacheAgeLabel() {
+    var stamp = lastSuccessfulRefreshAt !== "" ? lastSuccessfulRefreshAt : lastPeekAt
+    var then = new Date(String(stamp || "")).getTime()
+    if (!isFinite(then))
+      return stamp !== "" ? stamp : "last good snapshot"
+    var seconds = Math.max(0, Math.floor((Date.now() - then) / 1000))
+    if (seconds < 60)
+      return "just now"
+    if (seconds < 3600)
+      return Math.floor(seconds / 60) + "m ago"
+    if (seconds < 86400)
+      return Math.floor(seconds / 3600) + "h ago"
+    if (seconds < 2592000)
+      return Math.floor(seconds / 86400) + "d ago"
+    return Math.floor(seconds / 2592000) + "mo ago"
+  }
+
   function debugSnapshot() {
     var peek = snapshot || lastGoodSnapshot
+    var recents = peek && peek.recent ? peek.recent : []
     return JSON.stringify({
       state: state,
       message: message,
       resolvedGnoPath: resolvedGnoPath,
       generationId: generationId,
+      peekGenerationId: peekGenerationId,
       lastPeekAt: lastPeekAt,
+      lastSuccessfulRefreshAt: lastSuccessfulRefreshAt,
+      cacheAge: cacheAgeLabel(),
+      refreshQueued: refreshQueued,
+      maxPeekStdoutChars: maxPeekStdoutChars,
+      maxSearchStdoutChars: maxSearchStdoutChars,
       supportedGnoFloor: supportedGnoFloor,
       snapshot: peek,
       lastGoodSnapshot: lastGoodSnapshot,
       stale: stale,
+      recentCount: recents && recents.length ? recents.length : 0,
+      firstRecentTitle: recents && recents.length > 0 ? String(recents[0].title || recents[0].uri || "") : "",
       panelOpened: panelOpened === true,
       searchState: searchState,
       searchQuery: searchQuery,
@@ -246,12 +277,40 @@ Item {
     return fallback
   }
 
+  function beginPeekGeneration() {
+    peekGenerationId += 1
+    _runningPeekGen = peekGenerationId
+    console.info("gmickel.gno-recall: peek start gen=" + peekGenerationId)
+  }
+
+  function peekGenIsStale(finishedGen) {
+    if (finishedGen === peekGenerationId)
+      return false
+    console.info("gmickel.gno-recall: peek late-drop gen=" + finishedGen
+      + " current=" + peekGenerationId)
+    return true
+  }
+
+  function stdoutWithinBound(raw, limit, label) {
+    var text = String(raw || "")
+    if (text.length > limit) {
+      console.info("gmickel.gno-recall: " + label + " oversized stdout chars=" + text.length
+        + " bound=" + limit)
+      return false
+    }
+    return true
+  }
+
   function refresh() {
     if (probeProcess.running || peekProcess.running) {
       _refreshQueued = true
+      peekGenerationId += 1
+      console.info("gmickel.gno-recall: peek coalesce queued gen=" + peekGenerationId
+        + " dropped=" + _runningPeekGen)
       return
     }
     _refreshQueued = false
+    beginPeekGeneration()
     loading = true
     _stdout = ""
     _stderr = ""
@@ -310,6 +369,12 @@ Item {
   function handleProbeExit(exitCode) {
     probeKillTimer.stop()
     probeForceKillTimer.stop()
+    var finishedGen = _runningPeekGen
+    if (peekGenIsStale(finishedGen)) {
+      loading = false
+      finishIdle()
+      return
+    }
     var stdout = String(probeStdout.text || _stdout || "").trim()
     if (_timedOut) {
       dropLiveSnapshot()
@@ -379,9 +444,15 @@ Item {
   function handlePeekExit(exitCode) {
     peekKillTimer.stop()
     peekForceKillTimer.stop()
+    var finishedGen = _runningPeekGen
     var stdout = String(peekStdout.text || _stdout || "")
     var stderr = String(peekStderr.text || _stderr || "")
     loading = false
+
+    if (peekGenIsStale(finishedGen)) {
+      finishIdle()
+      return
+    }
 
     if (_timedOut) {
       dropLiveSnapshot()
@@ -395,7 +466,8 @@ Item {
       finishIdle()
       return
     }
-    if (stdout.length > maxStdoutChars || stderr.length > maxStdoutChars) {
+    if (!stdoutWithinBound(stdout, maxPeekStdoutChars, "peek")
+        || !stdoutWithinBound(stderr, maxPeekStdoutChars, "peek-stderr")) {
       dropLiveSnapshot()
       setState(stateMalformedJson, "gno peek output exceeded the size bound")
       finishIdle()
@@ -434,7 +506,8 @@ Item {
 
     snapshot = data
     lastGoodSnapshot = data
-    lastPeekAt = String(data.generatedAt || "")
+    lastSuccessfulRefreshAt = new Date().toISOString()
+    lastPeekAt = lastSuccessfulRefreshAt
     setState(stateReady, "")
     console.info("gmickel.gno-recall: peek ok schema=" + data.schemaVersion
       + " gnoVersion=" + data.gnoVersion
@@ -614,7 +687,8 @@ Item {
       console.info("gmickel.gno-recall: search spawn-failure gen=" + finishedGen)
       return
     }
-    if (stdout.length > maxStdoutChars || stderr.length > maxStdoutChars) {
+    if (!stdoutWithinBound(stdout, maxSearchStdoutChars, "search")
+        || !stdoutWithinBound(stderr, maxSearchStdoutChars, "search-stderr")) {
       searchResults = []
       searchHitCount = 0
       searchState = searchStateError
@@ -928,6 +1002,11 @@ Item {
     onRunningChanged: {
       if (!running && root._phase !== "peek" && root._phase !== "" && !root._started && !root._timedOut) {
         probeKillTimer.stop()
+        if (root.peekGenIsStale(root._runningPeekGen)) {
+          root.loading = false
+          root.finishIdle()
+          return
+        }
         root.dropLiveSnapshot()
         root.loading = false
         root.setState(root.stateSpawnFailure, "Failed to start gno discovery")
@@ -957,6 +1036,11 @@ Item {
     onRunningChanged: {
       if (!running && root._phase === "peek" && !root._started && !root._timedOut) {
         peekKillTimer.stop()
+        if (root.peekGenIsStale(root._runningPeekGen)) {
+          root.loading = false
+          root.finishIdle()
+          return
+        }
         root.dropLiveSnapshot()
         root.loading = false
         root.setState(root.stateSpawnFailure, "Failed to start gno peek --json")

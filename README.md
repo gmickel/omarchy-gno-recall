@@ -82,6 +82,10 @@ omarchy plugin add "$PWD" --enable
 
 `qmllint` may report Quickshell-module false positives (`Quickshell.Io.Process`, `StdioCollector`, `PanelWindow`) because those types come from the Quickshell runtime, not the Omarchy import path. Treat those as noise unless they point at real syntax errors.
 
+## Cache and privacy
+
+The last-good peek snapshot (titles, paths, snippets, and the last successful search list) lives **only in memory** on the `Service.qml` object. It is never written to XDG state, `Qt.labs.settings`, or a FileView. A Quickshell restart (`omarchy restart shell`) drops the cache; the bar shows a loading/empty state until the next `gno peek` succeeds. When a refresh fails, surfaces keep the last-good rows and show a visible cache age from `lastSuccessfulRefreshAt` (for example `Showing last good · 2m ago`).
+
 ## How it works
 
 `Service.qml` is the only `Process` owner. It resolves `gno` from the widget `gnoPath` (absolute) or `PATH`, then invokes `gno peek --json` as an argv array via `Quickshell.Io.Process` + `StdioCollector`. Bar and overlay surfaces look the service up with `bar.shell.serviceFor("gmickel.gno-recall")` — third-party plugins must not use `firstPartyServiceFor`.
