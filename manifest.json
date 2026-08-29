@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "gmickel.gno-recall",
+  "name": "GNO Recall",
+  "version": "0.1.0",
+  "author": "Gordon Mickel",
+  "license": "MIT",
+  "description": "Surface GNO index activity in the Omarchy bar.",
+  "homepage": "https://github.com/gmickel/omarchy-gno-recall",
+  "repository": "https://github.com/gmickel/omarchy-gno-recall",
+  "kinds": [
+    "service",
+    "bar-widget",
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml",
+    "overlay": "RecallOverlay.qml"
+  },
+  "barWidget": {
+    "displayName": "GNO Recall",
+    "description": "GNO index status and recent documents",
+    "category": "Knowledge",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "gnoPath": "",
+      "refreshIntervalSec": 900
+    },
+    "schema": [
+      {
+        "key": "gnoPath",
+        "type": "string",
+        "label": "Path to gno",
+        "defaultValue": "",
+        "description": "Absolute path to the gno binary. Leave empty to resolve gno from PATH."
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 60,
+        "max": 3600,
+        "step": 60,
+        "defaultValue": 900
+      }
+    ]
+  }
+}
