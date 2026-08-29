@@ -228,8 +228,12 @@ Item {
   function peekPayloadComplete(data) {
     if (!data || typeof data.initialized !== "boolean")
       return false
-    if (data.initialized !== true)
-      return true
+    var serve = data.serve
+    if (!serve || typeof serve !== "object" || typeof serve.running !== "boolean")
+      return false
+    if (data.initialized !== true) {
+      return data.counts === null && data.backlog === null && Array.isArray(data.recent)
+    }
     var counts = data.counts
     var backlog = data.backlog
     if (!counts || typeof counts !== "object")
