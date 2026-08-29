@@ -59,6 +59,23 @@ Item {
   property int searchHitCount: 0
   property bool searchLoading: false
 
+  property string actionStatus: ""
+  property string fileOpenerOverride: ""
+  property string browserOpenerOverride: ""
+  property string lastOpenKind: ""
+  property var lastOpenArgv: []
+  property bool lastOpenOk: false
+  property string lastOpenMessage: ""
+
+  readonly property string defaultFileOpener: "xdg-open"
+  readonly property string defaultBrowserOpener: "omarchy-launch-browser"
+  readonly property int actionStatusMs: 3000
+
+  property bool _openStarted: false
+  property string _openKind: ""
+  property var _pendingOpenArgv: []
+  property string _pendingOpenKind: ""
+
   property string _phase: ""
   property string _stdout: ""
   property string _stderr: ""
@@ -190,7 +207,16 @@ Item {
       searchHitCount: searchHitCount,
       searchLoading: searchLoading === true,
       searchLimit: searchLimit,
-      firstSearchUri: searchResults && searchResults.length > 0 ? String(searchResults[0].uri || "") : ""
+      firstSearchUri: searchResults && searchResults.length > 0 ? String(searchResults[0].uri || "") : "",
+      actionStatus: actionStatus,
+      lastOpenKind: lastOpenKind,
+      lastOpenArgv: lastOpenArgv,
+      lastOpenOk: lastOpenOk === true,
+      lastOpenMessage: lastOpenMessage,
+      serveRunning: serveIsRunning(),
+      serveUrl: serveHomeUrl(),
+      fileOpener: resolveFileOpener(),
+      browserOpener: resolveBrowserOpener()
     })
   }
 
@@ -628,6 +654,189 @@ Item {
       + " first=" + (rows.length > 0 ? rows[0].uri : ""))
   }
 
+  function setActionStatus(text) {
+    actionStatus = String(text || "")
+    lastOpenMessage = actionStatus
+    if (actionStatus !== "")
+      actionStatusTimer.restart()
+    else
+      actionStatusTimer.stop()
+  }
+
+  function setFileOpener(path) {
+    fileOpenerOverride = String(path || "").trim()
+    console.info("gmickel.gno-recall: file-opener override=" + (fileOpenerOverride || "(default)"))
+    return fileOpenerOverride || defaultFileOpener
+  }
+
+  function setBrowserOpener(path) {
+    browserOpenerOverride = String(path || "").trim()
+    console.info("gmickel.gno-recall: browser-opener override=" + (browserOpenerOverride || "(default)"))
+    return browserOpenerOverride || defaultBrowserOpener
+  }
+
+  function resolveFileOpener() {
+    return fileOpenerOverride !== "" ? fileOpenerOverride : defaultFileOpener
+  }
+
+  function resolveBrowserOpener() {
+    return browserOpenerOverride !== "" ? browserOpenerOverride : defaultBrowserOpener
+  }
+
+  function rowAbsPath(row) {
+    if (!row)
+      return ""
+    return String(row.absPath || "").trim()
+  }
+
+  function canOpenFile(rowOrPath) {
+    if (rowOrPath && typeof rowOrPath === "object")
+      return rowAbsPath(rowOrPath) !== ""
+    return String(rowOrPath || "").trim() !== ""
+  }
+
+  function serveIsRunning() {
+    var snap = snapshot || lastGoodSnapshot
+    return !!(snap && snap.serve && snap.serve.running === true)
+  }
+
+  function serveHomeUrl() {
+    if (!serveIsRunning())
+      return ""
+    var snap = snapshot || lastGoodSnapshot
+    var url = snap && snap.serve ? String(snap.serve.url || "").trim() : ""
+    return url.replace(/\/+$/, "")
+  }
+
+  function webDocUrl(uri) {
+    var home = serveHomeUrl()
+    if (home === "")
+      return ""
+    return home + "/doc?uri=" + encodeURIComponent(String(uri || ""))
+  }
+
+  function formatArgv(argv) {
+    var parts = []
+    var list = argv || []
+    for (var i = 0; i < list.length; i++)
+      parts.push(String(list[i]))
+    return parts.join(", ")
+  }
+
+  function launchArgv(argv, kind) {
+    var list = []
+    var source = argv || []
+    for (var i = 0; i < source.length; i++)
+      list.push(String(source[i]))
+    lastOpenKind = String(kind || "")
+    lastOpenArgv = list
+    lastOpenOk = false
+    lastOpenMessage = ""
+    console.info("gmickel.gno-recall: exec argv=[" + formatArgv(list) + "] kind=" + lastOpenKind)
+
+    if (list.length === 0) {
+      finishOpenFailure("No opener command")
+      return false
+    }
+
+    if (openProbeProcess.running) {
+      // A second open while the probe is in flight still launches argv-safe.
+      detachOpen(list)
+      lastOpenOk = true
+      setActionStatus("")
+      return true
+    }
+
+    _openStarted = false
+    _openKind = lastOpenKind
+    _pendingOpenArgv = list
+    _pendingOpenKind = lastOpenKind
+    var binary = list[0]
+    if (binary.indexOf("/") === 0)
+      openProbeProcess.command = ["/usr/bin/test", "-x", binary]
+    else
+      openProbeProcess.command = ["/usr/bin/which", binary]
+    openProbeProcess.running = true
+    return true
+  }
+
+  function detachOpen(argv) {
+    // Login shell + constant `exec "$@"` — same argv-safe pattern as Util.execArgv.
+    // GUI handlers (xdg-open → typora) need the session PATH/env.
+    Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "bash"].concat(argv))
+  }
+
+  function handleOpenProbe(exitCode) {
+    var argv = _pendingOpenArgv
+    var kind = _pendingOpenKind
+    _pendingOpenArgv = []
+    _pendingOpenKind = ""
+    if (!_openStarted || exitCode !== 0) {
+      finishOpenFailure("Could not start " + (kind || "file") + " opener")
+      return
+    }
+    detachOpen(argv)
+    lastOpenOk = true
+    lastOpenMessage = ""
+    setActionStatus("")
+    console.info("gmickel.gno-recall: open-ok kind=" + kind
+      + " argv=[" + formatArgv(argv) + "]")
+  }
+
+  function finishOpenFailure(detail) {
+    lastOpenOk = false
+    setActionStatus(String(detail || "Could not start opener"))
+    console.info("gmickel.gno-recall: open-fail kind=" + lastOpenKind
+      + " message=" + lastOpenMessage
+      + " argv=[" + formatArgv(lastOpenArgv) + "]")
+  }
+
+  function openSourceFile(absPath) {
+    var path = String(absPath || "").trim()
+    if (path === "") {
+      lastOpenKind = "file"
+      lastOpenArgv = []
+      lastOpenOk = false
+      setActionStatus("No file path — open source is disabled for this row")
+      console.info("gmickel.gno-recall: open-file disabled missing-abspath")
+      return false
+    }
+    return launchArgv([resolveFileOpener(), path], "file")
+  }
+
+  function openWebUi(uri) {
+    var value = String(uri || "").trim()
+    if (!serveIsRunning() || serveHomeUrl() === "") {
+      lastOpenKind = "web"
+      lastOpenArgv = []
+      lastOpenOk = false
+      setActionStatus("Web UI is down. Start it with: gno serve --detach")
+      console.info("gmickel.gno-recall: open-web blocked serve-down")
+      return false
+    }
+    if (value === "") {
+      lastOpenKind = "web"
+      lastOpenArgv = []
+      lastOpenOk = false
+      setActionStatus("Missing document URI — cannot open web UI")
+      return false
+    }
+    return launchArgv([resolveBrowserOpener(), webDocUrl(value)], "web")
+  }
+
+  function openServeHome() {
+    var url = serveHomeUrl()
+    if (url === "") {
+      lastOpenKind = "web-home"
+      lastOpenArgv = []
+      lastOpenOk = false
+      setActionStatus("Web UI is down. Start it with: gno serve --detach")
+      console.info("gmickel.gno-recall: open-web-home blocked serve-down")
+      return false
+    }
+    return launchArgv([resolveBrowserOpener(), url], "web-home")
+  }
+
   function killProcess(proc, forceTimer) {
     if (!proc.running)
       return
@@ -692,6 +901,13 @@ Item {
     interval: 1000
     repeat: false
     onTriggered: if (searchProcess.running) searchProcess.signal(9)
+  }
+
+  Timer {
+    id: actionStatusTimer
+    interval: root.actionStatusMs
+    repeat: false
+    onTriggered: root.actionStatus = ""
   }
 
   Process {
@@ -775,6 +991,23 @@ Item {
     }
     onExited: function(exitCode) {
       root.handleSearchExit(exitCode)
+    }
+  }
+
+  Process {
+    id: openProbeProcess
+    running: false
+    command: []
+    onStarted: root._openStarted = true
+    onRunningChanged: {
+      if (!running && !root._openStarted && root._pendingOpenArgv && root._pendingOpenArgv.length > 0) {
+        root.finishOpenFailure("Could not start " + (root._pendingOpenKind || "file") + " opener")
+        root._pendingOpenArgv = []
+        root._pendingOpenKind = ""
+      }
+    }
+    onExited: function(exitCode) {
+      root.handleOpenProbe(exitCode)
     }
   }
 }

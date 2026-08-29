@@ -51,6 +51,7 @@ Item {
     && (searchState === "ready" || searchState === "empty" || searchState === "error" || searchState === "timeout" || searchState === "loading")
   readonly property string emptyKind: resolveEmptyKind()
   readonly property string statusLine: resolveStatusLine()
+  readonly property string actionStatus: service ? String(service.actionStatus || "") : ""
 
   function open(payloadJson) {
     root.targetScreen = root.resolveFocusedScreen()
@@ -82,8 +83,11 @@ Item {
     root.opened = false
     if (service && typeof service.cancelSearch === "function")
       service.cancelSearch("dismiss")
-    if (shell && typeof shell.hide === "function")
+    if (shell && typeof shell.hide === "function") {
       shell.hide(root.pluginId)
+      return
+    }
+    console.warn("gmickel.gno-recall: shell hide unavailable; overlay closed locally, bar/panel stay usable")
   }
 
   function toggle() {
@@ -246,6 +250,8 @@ Item {
   }
 
   function resolveStatusLine() {
+    if (actionStatus !== "")
+      return actionStatus
     if (isStale)
       return "Showing last good snapshot"
     if (showingSearch && searchState === "loading")
@@ -259,7 +265,7 @@ Item {
     if (filterText.trim() !== "")
       return "Filtered recents — Enter to search"
     var recents = cachedRecents().length
-    return recents > 0 ? recents + " recent" : ""
+    return recents > 0 ? recents + " recent · Enter file · Ctrl+Enter web" : ""
   }
 
   function emptyCopy() {
@@ -382,10 +388,68 @@ Item {
     root.selectedIndex = index
   }
 
-  function activateIndex(index) {
+  function rowAt(index) {
     if (index < 0 || index >= displayModel.count)
+      return null
+    return displayModel.get(index)
+  }
+
+  function activateIndex(index) {
+    var row = rowAt(index)
+    if (!row || !service || typeof service.openSourceFile !== "function")
       return
-    // Open actions land in fn-120.5. Keep the overlay up.
+    service.openSourceFile(row.absPath)
+  }
+
+  function openWebAt(index) {
+    var row = rowAt(index)
+    if (!row || !service || typeof service.openWebUi !== "function")
+      return
+    service.openWebUi(row.uri)
+  }
+
+  function openSelectedFile(arg) {
+    activateIndex(root.selectedIndex)
+    return peekState(arg)
+  }
+
+  function openSelectedWeb(arg) {
+    openWebAt(root.selectedIndex)
+    return peekState(arg)
+  }
+
+  function refresh(arg) {
+    if (service && typeof service.refresh === "function")
+      service.refresh()
+    return peekState(arg)
+  }
+
+  function setFileOpener(path) {
+    if (service && typeof service.setFileOpener === "function")
+      return service.setFileOpener(path)
+    return "no-service"
+  }
+
+  function setBrowserOpener(path) {
+    if (service && typeof service.setBrowserOpener === "function")
+      return service.setBrowserOpener(path)
+    return service ? "no-method" : "no-service"
+  }
+
+  function injectMissingAbsPathRow(arg) {
+    displayModel.insert(0, {
+      kind: "recent",
+      docid: "qa-no-abspath",
+      uri: "gno://qa/missing-abspath.md",
+      title: "QA missing absPath",
+      collection: "qa",
+      snippet: "",
+      modifiedAt: "",
+      absPath: ""
+    })
+    root.selectedIndex = 0
+    root.cursorActive = true
+    return peekState(arg)
   }
 
   function peekState(arg) {
@@ -400,6 +464,7 @@ Item {
       base = { error: "service-unavailable" }
     }
     var first = displayModel.count > 0 ? displayModel.get(0) : null
+    var selected = rowAt(root.selectedIndex)
     base.overlayOpened = root.opened
     base.panelOpened = service ? service.panelOpened === true : false
     base.filterText = root.filterText
@@ -409,6 +474,14 @@ Item {
     base.rowCount = displayModel.count
     base.firstUri = first ? String(first.uri || "") : ""
     base.firstTitle = first ? String(first.title || "") : ""
+    base.firstAbsPath = first ? String(first.absPath || "") : ""
+    base.selectedUri = selected ? String(selected.uri || "") : ""
+    base.selectedAbsPath = selected ? String(selected.absPath || "") : ""
+    base.selectedCanOpenFile = selected ? String(selected.absPath || "").trim() !== "" : false
+    base.fileOpenDisabled = selected ? String(selected.absPath || "").trim() === "" : false
+    base.webDocUrl = service && typeof service.webDocUrl === "function" && selected
+      ? service.webDocUrl(selected.uri)
+      : ""
     base.targetScreen = root.targetScreen ? String(root.targetScreen.name || "") : ""
     return JSON.stringify(base)
   }
@@ -504,10 +577,16 @@ Item {
             root.selectAbsolute(displayModel.count - 1)
             event.accepted = true
           } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (root.filterText.trim() !== "")
-              root.commitSearch()
-            else
+            if (event.modifiers & Qt.ControlModifier) {
+              if (displayModel.count > 0)
+                root.openWebAt(root.selectedIndex)
+            } else if (displayModel.count > 0 && (root.showingSearch || root.filterText.trim() === "")) {
               root.activateIndex(root.selectedIndex)
+            } else if (root.filterText.trim() !== "") {
+              root.commitSearch()
+            } else if (displayModel.count > 0) {
+              root.activateIndex(root.selectedIndex)
+            }
             event.accepted = true
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
             root.setFilter(root.filterText + event.text)
@@ -551,7 +630,7 @@ Item {
             visible: root.statusLine !== ""
             width: parent.width
             text: root.statusLine
-            color: root.isStale || root.emptyKind === "search-error" || root.emptyKind === "search-timeout"
+            color: root.actionStatus !== "" || root.isStale || root.emptyKind === "search-error" || root.emptyKind === "search-timeout"
               ? Color.urgent
               : root.foreground
             opacity: 0.72
@@ -584,8 +663,10 @@ Item {
               required property string modifiedAt
               required property string uri
               required property string kind
+              required property string absPath
 
               readonly property bool hasCursor: root.cursorActive && index === root.selectedIndex
+              readonly property bool canOpenFile: String(absPath || "").trim() !== ""
               readonly property string metaText: {
                 var bits = []
                 if (collection !== "")
@@ -593,6 +674,8 @@ Item {
                 var stamp = root.formatStamp(modifiedAt)
                 if (stamp !== "")
                   bits.push(stamp)
+                if (!canOpenFile)
+                  bits.push("no file path")
                 return bits.join(" · ")
               }
 
@@ -613,6 +696,7 @@ Item {
                   width: parent.width
                   text: row.title
                   color: row.hasCursor ? root.selectedText : root.foreground
+                  opacity: row.canOpenFile ? 1 : 0.55
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.title
                   elide: Text.ElideRight
@@ -645,7 +729,7 @@ Item {
               MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true
-                cursorShape: Qt.ArrowCursor
+                cursorShape: row.canOpenFile ? Qt.PointingHandCursor : Qt.ArrowCursor
                 onPositionChanged: function(mouse) {
                   root.selectFromPointer(row.index, row, mouse)
                 }

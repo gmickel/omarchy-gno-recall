@@ -2,7 +2,7 @@
 
 An [Omarchy](https://omarchy.org/) shell plugin that surfaces [GNO](https://gno.sh) index activity from the bar.
 
-This repository is the plugin source. The bar widget is quiet when the index is healthy (a history glyph only) and adds a distinct shape plus color when there is backlog, staleness, or a setup/degraded fault. Left-click opens an anchored index panel; `omarchy-shell shell toggle gmickel.gno-recall` (or Super+R later) summons the recall overlay.
+This repository is the plugin source. The bar widget is quiet when the index is healthy (a history glyph only) and adds a distinct shape plus color when there is backlog, staleness, or a setup/degraded fault. Left-click opens an anchored index panel; Super+R (after the optional keybind script) or `omarchy-shell shell toggle gmickel.gno-recall` summons the recall overlay.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ This repository is the plugin source. The bar widget is quiet when the index is 
 
 Plugins run as **unsandboxed code inside `omarchy-shell`**. Adding a plugin clones files and toggles enabled state; it does not sandbox the QML. Only install repos you are willing to run in the long-lived shell process.
 
-The installer **never runs hooks**. A Super+R keybind, if you want one later, is a documented script you add yourself — not an `omarchy plugin add` hook.
+The installer **never runs hooks**. `omarchy plugin add` only clones files and toggles enabled state; it never runs plugin code. Super+R is a documented post-add script you run yourself (`scripts/install-keybind.sh`).
 
 ## Install
 
@@ -24,7 +24,14 @@ The installer **never runs hooks**. A Super+R keybind, if you want one later, is
 omarchy plugin add https://github.com/gmickel/omarchy-gno-recall --enable
 ```
 
-The widget lands on the right side of the bar. Move it with:
+The widget lands on the right side of the bar. The overlay is summonable immediately over IPC; Super+R is optional and is **not** installed by `plugin add`.
+
+```bash
+# From a checkout, after the plugin is added:
+./scripts/install-keybind.sh
+```
+
+Move the widget with:
 
 ```bash
 omarchy bar move gmickel.gno-recall --section right
@@ -68,6 +75,7 @@ From a checkout of this repo:
 omarchy plugin validate .
 qmllint -I "$OMARCHY_PATH/shell" Service.qml BarWidget.qml Panel.qml RecallOverlay.qml
 omarchy plugin add "$PWD" --enable
+./scripts/install-keybind.sh   # optional; skipped automatically if SUPER+R is taken
 ```
 
 `OMARCHY_PATH` is typically `/usr/share/omarchy`. After add, the live copy is `~/.config/omarchy/plugins/gmickel.gno-recall`. The shell hot-reloads QML under that directory; `omarchy-shell shell rescanPlugins` forces a reload.
@@ -78,9 +86,42 @@ omarchy plugin add "$PWD" --enable
 
 `Service.qml` is the only `Process` owner. It resolves `gno` from the widget `gnoPath` (absolute) or `PATH`, then invokes `gno peek --json` as an argv array via `Quickshell.Io.Process` + `StdioCollector`. Bar and overlay surfaces look the service up with `bar.shell.serviceFor("gmickel.gno-recall")` — third-party plugins must not use `firstPartyServiceFor`.
 
-The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). It opens on the focused monitor, grabs exclusive keyboard focus, and shows cached peek `recent[]` immediately. Typing filters titles and URI tails in memory — no `gno` subprocess per keystroke. Enter runs exactly one search through `Service.qml`; a new Enter or a query change cancels the in-flight Process and drops late JSON via a search generation id. Esc clears the filter, then dismisses via `shell.hide` so `openPanelIds` stays consistent.
+The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). It opens on the focused monitor, grabs exclusive keyboard focus, and shows cached peek `recent[]` immediately. Typing filters titles and URI tails in memory — no `gno` subprocess per keystroke. Enter on a query (before results land) runs exactly one search through `Service.qml`; a new Enter or a query change cancels the in-flight Process and drops late JSON via a search generation id. Esc clears the filter, then dismisses via `shell.hide` so `openPanelIds` stays consistent.
 
-Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits), snippet, and modified time. Arrow keys (and `j`/`k` when the filter is empty) move the highlight. Enter on a row does not open files yet. Search failure/timeout stays inline and keeps the overlay interactive; zero hits and empty-but-initialized indexes have distinct copy from uninitialized guidance.
+Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits), snippet, and modified time. Arrow keys (and `j`/`k` when the filter is empty) move the highlight. Search failure/timeout stays inline and keeps the overlay interactive; zero hits and empty-but-initialized indexes have distinct copy from uninitialized guidance.
+
+### Summon: Super+R, IPC, and alternatives
+
+The overlay toggle is already on the shell IPC contract — no second `IpcHandler` in this plugin:
+
+```bash
+omarchy-shell shell toggle gmickel.gno-recall
+omarchy-shell shell summon gmickel.gno-recall
+omarchy-shell shell hide gmickel.gno-recall
+```
+
+Default chord is **Super+R** ("Recall"). It is free against Omarchy Quattro defaults, but the install script still checks the live session (`omarchy menu keybindings --print` and `hyprctl binds` plain text — `hyprctl -j binds` is unreliable).
+
+| Result | Script behavior |
+| --- | --- |
+| Super+R free | Appends `o.bind("SUPER + R", "GNO Recall", "omarchy-shell shell toggle gmickel.gno-recall")` to `~/.config/hypr/bindings.lua` |
+| Super+R already this bind | Prints that it is installed and writes nothing (idempotent) |
+| Super+R taken by something else | Prints the conflicting bind, writes nothing, exits 1. Summon stays unbound. Never `hl.unbind`. |
+
+If the script exits 1, keep using the IPC one-liner or bind a free chord yourself.
+
+**Alternatives:** Super+G is taken by Omarchy's window-grouping default. Super+N is often free on Quattro, but collided with the editor bind on pre-Quattro Omarchy — treat it as a last-resort chord and re-check your own `bindings.lua` first.
+
+### Open actions
+
+Both the overlay rows and the panel recents list share the same helpers in `Service.qml`. Missing or empty `absPath` disables file-open for that row (the plugin never calls `gno get`). The plugin never starts `gno serve`.
+
+| Surface | Open source file | Open in GNO web UI |
+| --- | --- | --- |
+| Overlay | **Enter** (or click) on a highlighted row | **Ctrl+Enter** |
+| Panel recents | **Enter** (or click) | **w** |
+
+File-open launches the desktop default handler (`xdg-open`) with the row's `absPath` (peek recents use `absPath`; search hits use `source.absPath`). Web-open launches `omarchy-launch-browser` at `{serve.url}/doc?uri=<encodeURIComponent(uri)>`. If serve is down, a short non-blocking notice tells you to run `gno serve --detach` — nothing is spawned. A spawn failure of the opener is the same kind of notice; the overlay and panel stay interactive.
 
 Left-clicking the bar widget toggles the nested `Panel.qml` loader — it does not call that overlay IPC path. The anchored popup is not a manifest `panel` kind, so it cannot steal the overlay toggle.
 
@@ -100,7 +141,7 @@ Every state pairs a different glyph or badge **shape** with a theme color (`Colo
 
 Hover the widget for a short accessible status line. Middle-click refreshes the peek snapshot. Left-click opens the anchored panel: health line, document/collection counts, backlog, last-indexed time, and recent titles (URI-tail fallback when title is null). Escape closes it. Arrow keys move the highlight across recents and the footer actions.
 
-The panel never starts `gno serve`. **Open GNO web UI** is enabled only when peek reports `serve.running`; otherwise it stays disabled with `start: gno serve --detach`. **Recall search** toggles the overlay via `omarchy-shell shell toggle gmickel.gno-recall`.
+The panel never starts `gno serve`. **Open GNO web UI** is enabled only when peek reports `serve.running`; otherwise it stays disabled with `start: gno serve --detach`. **Recall search** toggles the overlay via `omarchy-shell shell toggle gmickel.gno-recall`. Recent rows open the source file on Enter/click and the web UI on `w`, with the same absPath / serve-down rules as the overlay.
 
 When peek has nothing to list, the panel shows one of three copy blocks instead of going blank: run `gno init` (uninitialized), add documents (initialized but empty), or setup/degraded guidance with the service error message.
 

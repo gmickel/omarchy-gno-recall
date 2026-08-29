@@ -38,6 +38,7 @@ Panel {
     : ""
   readonly property string bodyKind: resolveBodyKind()
   readonly property var cursorTargets: buildCursorTargets()
+  readonly property string actionStatus: service ? String(service.actionStatus || "") : ""
 
   property bool cursorActive: false
   property int cursorIndex: 0
@@ -283,9 +284,49 @@ Panel {
       openWebUi()
     else if (target.kind === "recall")
       summonOverlay()
+    else if (target.kind === "recent")
+      openRecentFile(target.index)
+  }
+
+  function recentRow(index) {
+    if (index < 0 || index >= recentRows.length)
+      return null
+    return recentRows[index]
+  }
+
+  function recentCanOpenFile(row) {
+    return service && typeof service.canOpenFile === "function"
+      ? service.canOpenFile(row)
+      : !!(row && String(row.absPath || "").trim() !== "")
+  }
+
+  function openRecentFile(index) {
+    var row = recentRow(index)
+    if (!row || !service || typeof service.openSourceFile !== "function")
+      return
+    service.openSourceFile(row.absPath)
+  }
+
+  function openRecentWeb(index) {
+    var row = recentRow(index)
+    if (!row || !service || typeof service.openWebUi !== "function")
+      return
+    service.openWebUi(row.uri)
+  }
+
+  function openSelectedWeb() {
+    var target = selectedTarget()
+    if (target && target.kind === "recent")
+      openRecentWeb(target.index)
+    else
+      openWebUi()
   }
 
   function openWebUi() {
+    if (service && typeof service.openServeHome === "function") {
+      service.openServeHome()
+      return
+    }
     if (!serveRunning || serveUrl === "")
       return
     Qt.openUrlExternally(serveUrl)
@@ -297,6 +338,7 @@ Panel {
       root.bar.shell.toggle("gmickel.gno-recall", "{}")
       return
     }
+    console.warn("gmickel.gno-recall: shell toggle unavailable; leaving panel usable")
     if (root.bar && typeof root.bar.run === "function")
       root.bar.run("omarchy-shell shell toggle gmickel.gno-recall")
   }
@@ -339,6 +381,10 @@ Panel {
       onActivateRequested: if (root.cursorActive) root.activateCursor()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
+      onTextKey: function(t) {
+        if (t === "w" || t === "W")
+          root.openSelectedWeb()
+      }
 
       Flickable {
         id: panelFlick
@@ -507,6 +553,17 @@ Panel {
               elide: Text.ElideMiddle
             }
 
+            Text {
+              visible: root.actionStatus !== ""
+              width: parent.width
+              text: root.actionStatus
+              textFormat: Text.PlainText
+              color: Color.urgent
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
             Button {
               width: parent.width
               text: "Recall search"
@@ -536,6 +593,15 @@ Panel {
             fontFamily: root.contentFontFamily
           }
 
+          Text {
+            visible: root.bodyKind === "index" && root.recentRows.length > 0
+            width: parent.width
+            text: "Enter opens file · w opens web UI"
+            color: root.dim
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+          }
+
           Column {
             visible: root.bodyKind === "index"
             width: parent.width
@@ -555,9 +621,12 @@ Panel {
                 MouseArea {
                   anchors.fill: parent
                   hoverEnabled: true
-                  cursorShape: Qt.ArrowCursor
+                  cursorShape: root.recentCanOpenFile(modelData) ? Qt.PointingHandCursor : Qt.ArrowCursor
                   onEntered: root.selectKind("recent", index)
-                  onClicked: root.selectKind("recent", index)
+                  onClicked: {
+                    root.selectKind("recent", index)
+                    root.openRecentFile(index)
+                  }
                 }
 
                 Column {
@@ -573,6 +642,7 @@ Panel {
                     width: parent.width
                     text: root.recentTitle(modelData)
                     color: root.contentForeground
+                    opacity: root.recentCanOpenFile(modelData) ? 1 : 0.55
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.body
                     elide: Text.ElideRight
@@ -580,8 +650,12 @@ Panel {
 
                   Text {
                     width: parent.width
-                    text: root.recentDetail(modelData)
-                    color: root.dim
+                    text: root.recentCanOpenFile(modelData)
+                      ? root.recentDetail(modelData)
+                      : (root.recentDetail(modelData) !== "—"
+                        ? root.recentDetail(modelData) + " · no file path"
+                        : "no file path")
+                    color: root.recentCanOpenFile(modelData) ? root.dim : Color.urgent
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
