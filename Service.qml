@@ -19,12 +19,17 @@ Item {
   readonly property string supportedPeekSchemaMajor: "peek@1.x"
   readonly property int maxPeekStdoutChars: 524288
   readonly property int maxSearchStdoutChars: 2097152
+  readonly property int maxStatusStdoutChars: 524288
+  readonly property int maxLsStdoutChars: 524288
   readonly property int maxProbeStdoutChars: 4096
   readonly property int probeTimeoutMs: 3000
   readonly property int peekTimeoutMs: 8000
   readonly property int searchTimeoutMs: 15000
+  readonly property int statusTimeoutMs: 8000
+  readonly property int lsTimeoutMs: 8000
   readonly property int openProbeTimeoutMs: 3000
   readonly property int searchLimit: 20
+  readonly property int lsPageSize: 50
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 900, 60, 3600)
 
   readonly property string stateNotFound: "not-found"
@@ -66,6 +71,32 @@ Item {
   property int searchHitCount: 0
   property bool searchLoading: false
 
+  readonly property string browseStateIdle: "idle"
+  readonly property string browseStateLoading: "loading"
+  readonly property string browseStateReady: "ready"
+  readonly property string browseStateEmpty: "empty"
+  readonly property string browseStateError: "error"
+  readonly property string browseStateTimeout: "timeout"
+
+  property var collections: []
+  property string collectionsState: "idle"
+  property string collectionsMessage: ""
+  property int collectionsGenerationId: 0
+  property bool collectionsLoading: false
+  property string lastStatusAt: ""
+  property var lastGoodCollections: []
+
+  property string lsCollection: ""
+  property string lsCollectionPath: ""
+  property int lsDocumentCount: 0
+  property var lsDocuments: []
+  property int lsOffset: 0
+  property bool lsHasMore: false
+  property string lsState: "idle"
+  property string lsMessage: ""
+  property int lsGenerationId: 0
+  property bool lsLoading: false
+
   property string actionStatus: ""
   property string fileOpenerOverride: ""
   property string browserOpenerOverride: ""
@@ -102,6 +133,27 @@ Item {
   property string _pendingSearchQuery: ""
   property int _pendingSearchGen: 0
   property bool _openTimedOut: false
+
+  property string _statusStdout: ""
+  property string _statusStderr: ""
+  property bool _statusStarted: false
+  property bool _statusTimedOut: false
+  property bool _statusOversized: false
+  property int _runningStatusGen: 0
+  property int _pendingStatusGen: 0
+
+  property string _lsStdout: ""
+  property string _lsStderr: ""
+  property bool _lsStarted: false
+  property bool _lsTimedOut: false
+  property bool _lsOversized: false
+  property int _runningLsGen: 0
+  property string _pendingLsCollection: ""
+  property string _pendingLsPath: ""
+  property int _pendingLsOffset: 0
+  property int _pendingLsGen: 0
+  property int _pendingLsDocCount: 0
+  property bool _lsAppend: false
 
   function setting(name, fallback) {
     var fromProp = settings ? settings[name] : undefined
@@ -275,6 +327,26 @@ Item {
       searchLoading: searchLoading === true,
       searchLimit: searchLimit,
       firstSearchUri: searchResults && searchResults.length > 0 ? String(searchResults[0].uri || "") : "",
+      collectionsState: collectionsState,
+      collectionsMessage: collectionsMessage,
+      collectionsGenerationId: collectionsGenerationId,
+      collectionsLoading: collectionsLoading === true,
+      collectionsCount: collections && collections.length ? collections.length : 0,
+      lastStatusAt: lastStatusAt,
+      statusCacheAge: statusCacheAgeLabel(),
+      lsState: lsState,
+      lsMessage: lsMessage,
+      lsCollection: lsCollection,
+      lsCollectionPath: lsCollectionPath,
+      lsDocumentCount: lsDocumentCount,
+      lsOffset: lsOffset,
+      lsHasMore: lsHasMore === true,
+      lsGenerationId: lsGenerationId,
+      lsLoading: lsLoading === true,
+      lsRowCount: lsDocuments && lsDocuments.length ? lsDocuments.length : 0,
+      lsPageSize: lsPageSize,
+      firstLsUri: lsDocuments && lsDocuments.length > 0 ? String(lsDocuments[0].uri || "") : "",
+      firstLsAbsPath: lsDocuments && lsDocuments.length > 0 ? String(lsDocuments[0].absPath || "") : "",
       actionStatus: actionStatus,
       lastOpenKind: lastOpenKind,
       lastOpenArgv: lastOpenArgv,
@@ -389,6 +461,36 @@ Item {
       _searchStdout = next
   }
 
+  function takeStatusOutput(chunk, isStderr) {
+    if (_statusOversized)
+      return
+    var current = isStderr ? _statusStderr : _statusStdout
+    var next = accumulateBounded(current, chunk, maxStatusStdoutChars)
+    if (next === null) {
+      killStatusForOversized()
+      return
+    }
+    if (isStderr)
+      _statusStderr = next
+    else
+      _statusStdout = next
+  }
+
+  function takeLsOutput(chunk, isStderr) {
+    if (_lsOversized)
+      return
+    var current = isStderr ? _lsStderr : _lsStdout
+    var next = accumulateBounded(current, chunk, maxLsStdoutChars)
+    if (next === null) {
+      killLsForOversized()
+      return
+    }
+    if (isStderr)
+      _lsStderr = next
+    else
+      _lsStdout = next
+  }
+
   function signalAndForceKill(proc, forceTimer) {
     if (!proc.running)
       return
@@ -421,6 +523,24 @@ Item {
     console.info("gmickel.gno-recall: search oversized bound=" + maxSearchStdoutChars)
     searchKillTimer.stop()
     signalAndForceKill(searchProcess, searchForceKillTimer)
+  }
+
+  function killStatusForOversized() {
+    if (_statusOversized)
+      return
+    _statusOversized = true
+    console.info("gmickel.gno-recall: status oversized bound=" + maxStatusStdoutChars)
+    statusKillTimer.stop()
+    signalAndForceKill(statusProcess, statusForceKillTimer)
+  }
+
+  function killLsForOversized() {
+    if (_lsOversized)
+      return
+    _lsOversized = true
+    console.info("gmickel.gno-recall: ls oversized bound=" + maxLsStdoutChars)
+    lsKillTimer.stop()
+    signalAndForceKill(lsProcess, lsForceKillTimer)
   }
 
   function refresh() {
@@ -877,6 +997,505 @@ Item {
       + " first=" + (rows.length > 0 ? rows[0].uri : ""))
   }
 
+  function statusCacheAgeLabel() {
+    var then = new Date(String(lastStatusAt || "")).getTime()
+    if (!isFinite(then))
+      return lastStatusAt !== "" ? lastStatusAt : ""
+    var seconds = Math.max(0, Math.floor((Date.now() - then) / 1000))
+    if (seconds < 60)
+      return "just now"
+    if (seconds < 3600)
+      return Math.floor(seconds / 60) + "m ago"
+    if (seconds < 86400)
+      return Math.floor(seconds / 3600) + "h ago"
+    return Math.floor(seconds / 86400) + "d ago"
+  }
+
+  function browsedAbsPath(collectionPath, relPath) {
+    var root = String(collectionPath || "").replace(/\/+$/, "")
+    var rel = String(relPath || "")
+    if (rel === "")
+      return ""
+    try {
+      if (/%[0-9A-Fa-f]{2}/.test(rel))
+        rel = decodeURIComponent(rel)
+    } catch (error) {
+    }
+    if (rel.charAt(0) === "/")
+      rel = rel.slice(1)
+    if (root === "")
+      return rel
+    return root + "/" + rel
+  }
+
+  function collectionByName(name) {
+    var needle = String(name || "")
+    var lists = [collections, lastGoodCollections]
+    for (var l = 0; l < lists.length; l++) {
+      var rows = lists[l] || []
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i] && String(rows[i].name || "") === needle)
+          return rows[i]
+      }
+    }
+    return null
+  }
+
+  function normalizeCollections(data) {
+    var src = data && data.collections ? data.collections : []
+    var rows = []
+    if (!Array.isArray(src))
+      return rows
+    for (var i = 0; i < src.length; i++) {
+      var item = src[i]
+      if (!item)
+        continue
+      var name = String(item.name || "").trim()
+      if (name === "")
+        continue
+      var count = parseInt(item.documentCount, 10)
+      rows.push({
+        name: name,
+        path: String(item.path || ""),
+        documentCount: isFinite(count) ? count : 0
+      })
+    }
+    return rows
+  }
+
+  function normalizeLsDocuments(data, collectionName, collectionPath) {
+    var docs = data && data.documents ? data.documents : []
+    var rows = []
+    if (!Array.isArray(docs))
+      return rows
+    for (var i = 0; i < docs.length; i++) {
+      var doc = docs[i]
+      if (!doc)
+        continue
+      var source = doc.source && typeof doc.source === "object" ? doc.source : {}
+      var title = doc.title !== undefined && doc.title !== null ? String(doc.title) : ""
+      var relPath = source.relPath !== undefined && source.relPath !== null ? String(source.relPath) : ""
+      var uri = String(doc.uri || "")
+      rows.push({
+        kind: "browse",
+        docid: String(doc.docid || ""),
+        uri: uri,
+        title: title,
+        collection: String(collectionName || ""),
+        snippet: relPath,
+        modifiedAt: "",
+        absPath: browsedAbsPath(collectionPath, relPath),
+        relPath: relPath
+      })
+    }
+    return rows
+  }
+
+  function inferLsHasMore(data, pageRows, loadedCount) {
+    var meta = data && data.meta && typeof data.meta === "object" ? data.meta : null
+    if (meta) {
+      if (typeof meta.hasMore === "boolean")
+        return meta.hasMore
+      if (typeof meta.has_more === "boolean")
+        return meta.has_more
+      var total = parseInt(meta.total, 10)
+      if (isFinite(total))
+        return loadedCount < total
+    }
+    return pageRows.length >= lsPageSize
+  }
+
+  function cancelStatus(reason) {
+    collectionsGenerationId += 1
+    _pendingStatusGen = 0
+    statusKillTimer.stop()
+    if (statusProcess.running) {
+      _statusTimedOut = false
+      statusProcess.signal(15)
+      statusForceKillTimer.restart()
+    } else {
+      statusForceKillTimer.stop()
+    }
+    collectionsLoading = false
+    if (collectionsState === browseStateLoading) {
+      if (lastGoodCollections && lastGoodCollections.length > 0) {
+        collections = lastGoodCollections
+        collectionsState = browseStateReady
+        collectionsMessage = ""
+      } else {
+        collectionsState = browseStateIdle
+        collectionsMessage = ""
+      }
+    }
+    console.info("gmickel.gno-recall: status cancelled gen=" + collectionsGenerationId
+      + " reason=" + String(reason || "cancel")
+      + " dropped=" + _runningStatusGen)
+  }
+
+  function runStatus() {
+    collectionsGenerationId += 1
+    var gen = collectionsGenerationId
+    collectionsMessage = ""
+    collectionsLoading = true
+    collectionsState = browseStateLoading
+    _statusTimedOut = false
+    console.info("gmickel.gno-recall: status request gen=" + gen)
+
+    if (statusProcess.running) {
+      _pendingStatusGen = gen
+      statusProcess.signal(15)
+      statusForceKillTimer.restart()
+      console.info("gmickel.gno-recall: status cancel-inflight running=" + _runningStatusGen
+        + " pending=" + gen)
+      return
+    }
+    startStatusProcess(gen)
+  }
+
+  function startStatusProcess(gen) {
+    _runningStatusGen = gen
+    _pendingStatusGen = 0
+    _statusStarted = false
+    _statusTimedOut = false
+    _statusOversized = false
+    _statusStdout = ""
+    _statusStderr = ""
+    statusKillTimer.stop()
+    statusForceKillTimer.stop()
+
+    if (resolvedGnoPath === "") {
+      collectionsLoading = false
+      collectionsState = browseStateError
+      collectionsMessage = "gno path is not resolved"
+      console.info("gmickel.gno-recall: status error gen=" + gen + " message=" + collectionsMessage)
+      return
+    }
+
+    statusProcess.command = [resolvedGnoPath, "status", "--json"]
+    statusProcess.running = true
+    statusKillTimer.interval = statusTimeoutMs
+    statusKillTimer.restart()
+    console.info("gmickel.gno-recall: status start gen=" + gen
+      + " argv=[" + resolvedGnoPath + ", status, --json]")
+  }
+
+  function handleStatusExit(exitCode) {
+    statusKillTimer.stop()
+    statusForceKillTimer.stop()
+    var finishedGen = _runningStatusGen
+    var pendingGen = _pendingStatusGen
+    var stdout = String(_statusStdout || "")
+    var stderr = String(_statusStderr || "")
+    var timedOut = _statusTimedOut
+    var started = _statusStarted
+    var oversized = _statusOversized
+    _runningStatusGen = 0
+    _pendingStatusGen = 0
+    _statusTimedOut = false
+    _statusOversized = false
+
+    if (pendingGen !== 0 && pendingGen === collectionsGenerationId) {
+      console.info("gmickel.gno-recall: status late-drop gen=" + finishedGen
+        + " current=" + collectionsGenerationId
+        + " starting pending gen=" + pendingGen)
+      startStatusProcess(pendingGen)
+      return
+    }
+
+    if (finishedGen !== collectionsGenerationId) {
+      console.info("gmickel.gno-recall: status late-drop gen=" + finishedGen
+        + " current=" + collectionsGenerationId)
+      return
+    }
+
+    collectionsLoading = false
+
+    if (timedOut) {
+      collectionsState = browseStateTimeout
+      collectionsMessage = "Timed out listing collections"
+      console.info("gmickel.gno-recall: status timeout gen=" + finishedGen)
+      return
+    }
+    if (!started) {
+      collectionsState = browseStateError
+      collectionsMessage = "Failed to start gno status"
+      console.info("gmickel.gno-recall: status spawn-failure gen=" + finishedGen)
+      return
+    }
+    if (oversized
+        || !stdoutWithinBound(stdout, maxStatusStdoutChars, "status")
+        || !stdoutWithinBound(stderr, maxStatusStdoutChars, "status-stderr")) {
+      collectionsState = browseStateError
+      collectionsMessage = "gno status output exceeded the size bound"
+      console.info("gmickel.gno-recall: status error gen=" + finishedGen + " message=" + collectionsMessage)
+      return
+    }
+
+    if (exitCode !== 0) {
+      var errObj = errorPayload(stderr, stdout)
+      collectionsState = browseStateError
+      collectionsMessage = errorDetail(errObj, stderr, stdout, "gno status failed")
+      console.info("gmickel.gno-recall: status error gen=" + finishedGen
+        + " exit=" + exitCode + " message=" + collectionsMessage)
+      return
+    }
+
+    var data = parseJsonObject(stdout)
+    if (!data || !Array.isArray(data.collections)) {
+      collectionsState = browseStateError
+      collectionsMessage = "gno status returned unreadable or incomplete JSON"
+      console.info("gmickel.gno-recall: status malformed-json gen=" + finishedGen)
+      return
+    }
+
+    var rows = normalizeCollections(data)
+    collections = rows
+    lastGoodCollections = rows
+    lastStatusAt = new Date().toISOString()
+    collectionsMessage = ""
+    collectionsState = rows.length === 0 ? browseStateEmpty : browseStateReady
+    console.info("gmickel.gno-recall: status ok gen=" + finishedGen
+      + " collections=" + rows.length)
+  }
+
+  function cancelLs(reason) {
+    lsGenerationId += 1
+    _pendingLsCollection = ""
+    _pendingLsPath = ""
+    _pendingLsOffset = 0
+    _pendingLsGen = 0
+    _pendingLsDocCount = 0
+    lsKillTimer.stop()
+    if (lsProcess.running) {
+      _lsTimedOut = false
+      lsProcess.signal(15)
+      lsForceKillTimer.restart()
+    } else {
+      lsForceKillTimer.stop()
+    }
+    lsLoading = false
+    if (lsState === browseStateLoading) {
+      lsState = lsDocuments && lsDocuments.length > 0 ? browseStateReady : browseStateIdle
+      lsMessage = ""
+    }
+    console.info("gmickel.gno-recall: ls cancelled gen=" + lsGenerationId
+      + " reason=" + String(reason || "cancel")
+      + " dropped=" + _runningLsGen)
+  }
+
+  function runLs(collection, offset) {
+    var name = String(collection || "").trim()
+    var off = parseInt(offset, 10)
+    if (!isFinite(off) || off < 0)
+      off = 0
+    if (name === "")
+      return
+
+    var cached = collectionByName(name)
+    var collectionPath = cached ? String(cached.path || "") : String(lsCollectionPath || "")
+    var docCount = cached && isFiniteNumber(cached.documentCount)
+      ? cached.documentCount
+      : (name === lsCollection ? lsDocumentCount : 0)
+
+    lsGenerationId += 1
+    var gen = lsGenerationId
+    var changing = name !== lsCollection || off === 0
+    if (changing) {
+      lsDocuments = []
+      lsHasMore = false
+      lsOffset = 0
+    }
+    lsCollection = name
+    lsCollectionPath = collectionPath
+    lsDocumentCount = docCount
+    lsMessage = ""
+    lsLoading = true
+    lsState = browseStateLoading
+    _lsTimedOut = false
+    console.info("gmickel.gno-recall: ls request gen=" + gen
+      + " collection=" + name + " offset=" + off)
+
+    if (lsProcess.running) {
+      _pendingLsCollection = name
+      _pendingLsPath = collectionPath
+      _pendingLsOffset = off
+      _pendingLsGen = gen
+      _pendingLsDocCount = docCount
+      lsProcess.signal(15)
+      lsForceKillTimer.restart()
+      console.info("gmickel.gno-recall: ls cancel-inflight running=" + _runningLsGen
+        + " pending=" + gen)
+      return
+    }
+    startLsProcess(name, collectionPath, off, gen, docCount)
+  }
+
+  function startLsProcess(collection, collectionPath, offset, gen, docCount) {
+    _runningLsGen = gen
+    _pendingLsCollection = ""
+    _pendingLsPath = ""
+    _pendingLsOffset = 0
+    _pendingLsGen = 0
+    _pendingLsDocCount = 0
+    _lsStarted = false
+    _lsTimedOut = false
+    _lsOversized = false
+    _lsStdout = ""
+    _lsStderr = ""
+    _lsAppend = offset > 0
+    lsKillTimer.stop()
+    lsForceKillTimer.stop()
+
+    if (resolvedGnoPath === "") {
+      lsLoading = false
+      lsState = browseStateError
+      lsMessage = "gno path is not resolved"
+      console.info("gmickel.gno-recall: ls error gen=" + gen + " message=" + lsMessage)
+      return
+    }
+
+    var argv = [
+      resolvedGnoPath,
+      "ls",
+      collection,
+      "--json",
+      "-n",
+      String(lsPageSize)
+    ]
+    // gno 1.36.0 rejects --offset 0 ("must be positive"); omit it on page 1.
+    if (offset > 0)
+      argv.push("--offset", String(offset))
+    lsProcess.command = argv
+    lsProcess.running = true
+    lsKillTimer.interval = lsTimeoutMs
+    lsKillTimer.restart()
+    console.info("gmickel.gno-recall: ls start gen=" + gen
+      + " argv=[" + argv.join(", ") + "]")
+  }
+
+  function handleLsExit(exitCode) {
+    lsKillTimer.stop()
+    lsForceKillTimer.stop()
+    var finishedGen = _runningLsGen
+    var pendingCollection = _pendingLsCollection
+    var pendingPath = _pendingLsPath
+    var pendingOffset = _pendingLsOffset
+    var pendingGen = _pendingLsGen
+    var pendingDocCount = _pendingLsDocCount
+    var stdout = String(_lsStdout || "")
+    var stderr = String(_lsStderr || "")
+    var timedOut = _lsTimedOut
+    var started = _lsStarted
+    var oversized = _lsOversized
+    var append = _lsAppend
+    _runningLsGen = 0
+    _pendingLsCollection = ""
+    _pendingLsPath = ""
+    _pendingLsOffset = 0
+    _pendingLsGen = 0
+    _pendingLsDocCount = 0
+    _lsTimedOut = false
+    _lsOversized = false
+    _lsAppend = false
+
+    if (pendingCollection !== "" && pendingGen === lsGenerationId) {
+      lsCollection = pendingCollection
+      lsCollectionPath = pendingPath
+      lsDocumentCount = pendingDocCount
+      console.info("gmickel.gno-recall: ls late-drop gen=" + finishedGen
+        + " current=" + lsGenerationId
+        + " starting pending gen=" + pendingGen)
+      startLsProcess(pendingCollection, pendingPath, pendingOffset, pendingGen, pendingDocCount)
+      return
+    }
+
+    if (finishedGen !== lsGenerationId) {
+      console.info("gmickel.gno-recall: ls late-drop gen=" + finishedGen
+        + " current=" + lsGenerationId)
+      return
+    }
+
+    lsLoading = false
+
+    if (timedOut) {
+      if (!append)
+        lsDocuments = []
+      lsHasMore = false
+      lsState = browseStateTimeout
+      lsMessage = "Timed out listing documents"
+      console.info("gmickel.gno-recall: ls timeout gen=" + finishedGen)
+      return
+    }
+    if (!started) {
+      if (!append)
+        lsDocuments = []
+      lsHasMore = false
+      lsState = browseStateError
+      lsMessage = "Failed to start gno ls"
+      console.info("gmickel.gno-recall: ls spawn-failure gen=" + finishedGen)
+      return
+    }
+    if (oversized
+        || !stdoutWithinBound(stdout, maxLsStdoutChars, "ls")
+        || !stdoutWithinBound(stderr, maxLsStdoutChars, "ls-stderr")) {
+      if (!append)
+        lsDocuments = []
+      lsHasMore = false
+      lsState = browseStateError
+      lsMessage = "gno ls output exceeded the size bound"
+      console.info("gmickel.gno-recall: ls error gen=" + finishedGen + " message=" + lsMessage)
+      return
+    }
+
+    if (exitCode !== 0) {
+      var errObj = errorPayload(stderr, stdout)
+      if (!append)
+        lsDocuments = []
+      lsHasMore = false
+      lsState = browseStateError
+      lsMessage = errorDetail(errObj, stderr, stdout, "gno ls failed")
+      console.info("gmickel.gno-recall: ls error gen=" + finishedGen
+        + " exit=" + exitCode + " message=" + lsMessage)
+      return
+    }
+
+    var data = parseJsonObject(stdout)
+    if (!data || !Array.isArray(data.documents)) {
+      if (!append)
+        lsDocuments = []
+      lsHasMore = false
+      lsState = browseStateError
+      lsMessage = "gno ls returned unreadable or incomplete JSON"
+      console.info("gmickel.gno-recall: ls malformed-json gen=" + finishedGen)
+      return
+    }
+
+    var page = normalizeLsDocuments(data, lsCollection, lsCollectionPath)
+    var merged = []
+    if (append) {
+      var existing = lsDocuments || []
+      for (var i = 0; i < existing.length; i++)
+        merged.push(existing[i])
+    }
+    for (var p = 0; p < page.length; p++)
+      merged.push(page[p])
+    lsDocuments = merged
+    lsOffset = merged.length
+    var meta = data.meta && typeof data.meta === "object" ? data.meta : null
+    var total = meta ? parseInt(meta.total, 10) : NaN
+    if (isFinite(total))
+      lsDocumentCount = total
+    lsHasMore = inferLsHasMore(data, page, merged.length)
+    lsMessage = ""
+    lsState = merged.length === 0 ? browseStateEmpty : browseStateReady
+    console.info("gmickel.gno-recall: ls ok gen=" + finishedGen
+      + " collection=" + lsCollection
+      + " rows=" + merged.length
+      + " page=" + page.length
+      + " hasMore=" + lsHasMore
+      + " first=" + (merged.length > 0 ? merged[0].uri : ""))
+  }
+
   function setActionStatus(text) {
     actionStatus = String(text || "")
     lastOpenMessage = actionStatus
@@ -1083,6 +1702,22 @@ Item {
     searchForceKillTimer.restart()
   }
 
+  function killStatusProcess() {
+    if (!statusProcess.running)
+      return
+    _statusTimedOut = true
+    statusProcess.signal(15)
+    statusForceKillTimer.restart()
+  }
+
+  function killLsProcess() {
+    if (!lsProcess.running)
+      return
+    _lsTimedOut = true
+    lsProcess.signal(15)
+    lsForceKillTimer.restart()
+  }
+
   function killOpenProbeProcess() {
     if (!openProbeProcess.running)
       return
@@ -1139,6 +1774,34 @@ Item {
     interval: 1000
     repeat: false
     onTriggered: if (searchProcess.running) searchProcess.signal(9)
+  }
+
+  Timer {
+    id: statusKillTimer
+    interval: root.statusTimeoutMs
+    repeat: false
+    onTriggered: root.killStatusProcess()
+  }
+
+  Timer {
+    id: statusForceKillTimer
+    interval: 1000
+    repeat: false
+    onTriggered: if (statusProcess.running) statusProcess.signal(9)
+  }
+
+  Timer {
+    id: lsKillTimer
+    interval: root.lsTimeoutMs
+    repeat: false
+    onTriggered: root.killLsProcess()
+  }
+
+  Timer {
+    id: lsForceKillTimer
+    interval: 1000
+    repeat: false
+    onTriggered: if (lsProcess.running) lsProcess.signal(9)
   }
 
   Timer {
@@ -1247,6 +1910,54 @@ Item {
     }
     onExited: function(exitCode) {
       root.handleSearchExit(exitCode)
+    }
+  }
+
+  Process {
+    id: statusProcess
+    running: false
+    command: []
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { root.takeStatusOutput(data, false) }
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { root.takeStatusOutput(data, true) }
+    }
+    onStarted: root._statusStarted = true
+    onRunningChanged: {
+      if (!running && root._runningStatusGen !== 0 && !root._statusStarted && !root._statusTimedOut) {
+        statusKillTimer.stop()
+        root.handleStatusExit(1)
+      }
+    }
+    onExited: function(exitCode) {
+      root.handleStatusExit(exitCode)
+    }
+  }
+
+  Process {
+    id: lsProcess
+    running: false
+    command: []
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { root.takeLsOutput(data, false) }
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { root.takeLsOutput(data, true) }
+    }
+    onStarted: root._lsStarted = true
+    onRunningChanged: {
+      if (!running && root._runningLsGen !== 0 && !root._lsStarted && !root._lsTimedOut) {
+        lsKillTimer.stop()
+        root.handleLsExit(1)
+      }
+    }
+    onExited: function(exitCode) {
+      root.handleLsExit(exitCode)
     }
   }
 

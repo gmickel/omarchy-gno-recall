@@ -10,7 +10,7 @@ This repository is the plugin source. The bar widget is quiet when the index is 
 - [gno](https://github.com/gmickel/gno) **>= 1.36.0** on `PATH`, or an absolute path in the widget's **Path to gno** setting
 - A Nerd Font (Omarchy includes one by default)
 
-`gno peek --json` is the snapshot path. Committed overlay search is a second argv-array call: `gno search <query> --json --no-project-affinity -n 20`. Released gno 1.36.0 ships `gno peek` (`schemaVersion` `peek@1.0`) and the GNO web UI `/doc?uri=` deep link (plus `source.absPath` on search hits). Older gno builds fail discovery with an `unknown-command` state instead of crashing the shell. The plugin never calls `gno get` or `gno serve`.
+`gno peek --json` is the snapshot path. Committed overlay search is a second argv-array call: `gno search <query> --json --no-project-affinity -n 20`. Collection browse uses `gno status --json` (collections list) and `gno ls <collection> --json -n 50 --offset <n>` (paginated documents). Released gno 1.36.0 ships `gno peek` (`schemaVersion` `peek@1.0`) and the GNO web UI `/doc?uri=` deep link (plus `source.absPath` on search hits). Older gno builds fail discovery with an `unknown-command` state instead of crashing the shell. The plugin never calls `gno get` or `gno serve`.
 
 ## Privilege boundary
 
@@ -84,15 +84,19 @@ omarchy plugin add "$PWD" --enable
 
 ## Cache and privacy
 
-The last-good peek snapshot (titles, paths, snippets, and the last successful search list) lives **only in memory** on the `Service.qml` object. It is never written to XDG state, `Qt.labs.settings`, or a FileView. A Quickshell restart (`omarchy restart shell`) drops the cache; the bar shows a loading/empty state until the next `gno peek` succeeds. When a refresh fails, surfaces keep the last-good rows and show a visible cache age from `lastSuccessfulRefreshAt` (for example `Showing last good · 2m ago`).
+The last-good peek snapshot (titles, paths, snippets, and the last successful search list) lives **only in memory** on the `Service.qml` object, as do the collections list from `gno status` and any paginated `gno ls` page. Nothing is written to XDG state, `Qt.labs.settings`, or a FileView. A Quickshell restart (`omarchy restart shell`) drops the cache; the bar shows a loading/empty state until the next `gno peek` succeeds. When a refresh fails, surfaces keep the last-good rows and show a visible cache age from `lastSuccessfulRefreshAt` (for example `Showing last good · 2m ago`).
 
 ## How it works
 
 `Service.qml` is the only `Process` owner. It resolves `gno` from the widget `gnoPath` (absolute) or `PATH`, then invokes `gno peek --json` as an argv array via `Quickshell.Io.Process` + `SplitParser` (empty `splitMarker`, raw-chunk accumulation with a 512KiB kill bound). Bar and overlay surfaces look the service up with `bar.shell.serviceFor("gmickel.gno-recall")` — third-party plugins must not use `firstPartyServiceFor`.
 
-The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). It opens on the focused monitor, grabs exclusive keyboard focus, and shows cached peek `recent[]` immediately. Typing filters titles and URI tails in memory — no `gno` subprocess per keystroke. Enter on a query (before results land) runs exactly one search through `Service.qml`; a new Enter or a query change cancels the in-flight Process and drops late JSON via a search generation id. Esc clears the filter, then dismisses via `shell.hide` so `openPanelIds` stays consistent.
+The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). It opens on the focused monitor, grabs exclusive keyboard focus, and shows cached peek `recent[]` immediately. Typing filters titles and URI tails in memory — no `gno` subprocess per keystroke. Enter on a query (before results land) runs exactly one search through `Service.qml`; a new Enter or a query change cancels the in-flight Process and drops late JSON via a search generation id.
 
-Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits), snippet, and modified time. Arrow keys (and `j`/`k` when the filter is empty) move the highlight. Search failure/timeout stays inline and keeps the overlay interactive; zero hits and empty-but-initialized indexes have distinct copy from uninitialized guidance.
+**Browse collections** is a second overlay mode. From recents, **Tab** (or **Ctrl+B**) lists every collection from `gno status --json` (name + document count). Enter drills into a paginated `gno ls` document list (50 per page). A **Load more…** row (Enter, Right, or Page Down at the end) appends the next offset. Typing still filters in memory only — collection names on the list, already-loaded document titles/paths inside a collection. Esc walks back one step at a time: clear filter → documents back to collections → collections back to recents → dismiss via `shell.hide`. Backspace with an empty filter also steps back a browse level without dismissing.
+
+`omarchy-shell shell summon gmickel.gno-recall '{"mode":"collections"}'` opens the overlay directly on the collections list. The panel **Browse collections** action uses that payload.
+
+Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits, `source.relPath` for browsed documents), snippet, and modified time. Browsed documents derive `absPath` by joining the collection's absolute `path` with `source.relPath` — the plugin never calls `gno get`. Arrow keys (and `j`/`k` when the filter is empty) move the highlight. Search, status, and ls failure/timeout stay inline and keep the overlay interactive; empty collections and empty-but-initialized indexes have distinct copy from uninitialized guidance.
 
 ### Summon: Super+R, IPC, and alternatives
 
@@ -101,6 +105,7 @@ The overlay toggle is already on the shell IPC contract — no second `IpcHandle
 ```bash
 omarchy-shell shell toggle gmickel.gno-recall
 omarchy-shell shell summon gmickel.gno-recall
+omarchy-shell shell summon gmickel.gno-recall '{"mode":"collections"}'
 omarchy-shell shell hide gmickel.gno-recall
 ```
 
@@ -122,10 +127,23 @@ Both the overlay rows and the panel recents list share the same helpers in `Serv
 
 | Surface | Open source file | Open in GNO web UI |
 | --- | --- | --- |
-| Overlay | **Enter** (or click) on a highlighted row | **Ctrl+Enter** |
+| Overlay recents / search / browsed docs | **Enter** (or click) on a highlighted row | **Ctrl+Enter** |
+| Overlay collections list | **Enter** drills into the collection | — |
 | Panel recents | **Enter** (or click) | **w** |
 
-File-open launches the desktop default handler (`xdg-open`) with the row's `absPath` (peek recents use `absPath`; search hits use `source.absPath`). Web-open launches `omarchy-launch-browser` at `{serve.url}/doc?uri=<encodeURIComponent(uri)>`. If serve is down, a short non-blocking notice tells you to run `gno serve --detach` — nothing is spawned. A spawn failure of the opener is the same kind of notice; the overlay and panel stay interactive.
+### Overlay keys
+
+| Key | Recents | Collections | Documents |
+| --- | --- | --- | --- |
+| Type / Backspace | Filter recents in memory | Filter collection names | Filter loaded rows |
+| Enter | Search if a filter is typed; otherwise open the file | Open the highlighted collection | Open the file (or load the next page on **Load more…**) |
+| Ctrl+Enter | Open web UI | — | Open web UI |
+| Tab / Ctrl+B | Switch to collections | — | — |
+| Esc | Clear filter, then dismiss | Clear filter, then back to recents | Clear filter, then back to collections |
+| Backspace (empty filter) | — | Back to recents | Back to collections |
+| Page Down / Right | Jump highlight | Jump highlight | Load more when the page is full |
+
+File-open launches the desktop default handler (`xdg-open`) with the row's `absPath` (peek recents use `absPath`; search hits use `source.absPath`; browsed docs join `collection.path` + `source.relPath`). Web-open launches `omarchy-launch-browser` at `{serve.url}/doc?uri=<encodeURIComponent(uri)>`. If serve is down, a short non-blocking notice tells you to run `gno serve --detach` — nothing is spawned. A spawn failure of the opener is the same kind of notice; the overlay and panel stay interactive.
 
 Left-clicking the bar widget toggles the nested `Panel.qml` loader — it does not call that overlay IPC path. The anchored popup is not a manifest `panel` kind, so it cannot steal the overlay toggle.
 
@@ -145,7 +163,7 @@ Every state pairs a different glyph or badge **shape** with a theme color (`Colo
 
 Hover the widget for a short accessible status line. Middle-click refreshes the peek snapshot. Left-click opens the anchored panel: health line, document/collection counts, backlog, last-indexed time, and recent titles (URI-tail fallback when title is null). Escape closes it. Arrow keys move the highlight across recents and the footer actions.
 
-The panel never starts `gno serve`. **Open GNO web UI** is enabled only when peek reports `serve.running`; otherwise it stays disabled with `start: gno serve --detach`. **Recall search** toggles the overlay via `omarchy-shell shell toggle gmickel.gno-recall`. Recent rows open the source file on Enter/click and the web UI on `w`, with the same absPath / serve-down rules as the overlay.
+The panel never starts `gno serve`. **Open GNO web UI** is enabled only when peek reports `serve.running`; otherwise it stays disabled with `start: gno serve --detach`. **Recall search** toggles the overlay via `omarchy-shell shell toggle gmickel.gno-recall`. **Browse collections** summons the overlay directly into collections mode (`{"mode":"collections"}`). Recent rows open the source file on Enter/click and the web UI on `w`, with the same absPath / serve-down rules as the overlay.
 
 When peek has nothing to list, the panel shows one of three copy blocks instead of going blank: run `gno init` (uninitialized), add documents (initialized but empty), or setup/degraded guidance with the service error message.
 

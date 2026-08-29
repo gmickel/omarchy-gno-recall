@@ -233,6 +233,7 @@ Panel {
     var targets = []
     targets.push({ kind: "webui", index: -1 })
     targets.push({ kind: "recall", index: -1 })
+    targets.push({ kind: "browse", index: -1 })
     for (var i = 0; i < recentRows.length; i++)
       targets.push({ kind: "recent", index: i })
     return targets
@@ -288,6 +289,8 @@ Panel {
       openWebUi()
     else if (target.kind === "recall")
       summonOverlay()
+    else if (target.kind === "browse")
+      summonOverlayBrowse()
     else if (target.kind === "recent")
       openRecentFile(target.index)
   }
@@ -345,6 +348,22 @@ Panel {
     console.warn("gmickel.gno-recall: shell toggle unavailable; leaving panel usable")
     if (root.bar && typeof root.bar.run === "function")
       root.bar.run("omarchy-shell shell toggle gmickel.gno-recall")
+  }
+
+  function summonOverlayBrowse() {
+    root.close()
+    var payload = '{"mode":"collections"}'
+    if (root.bar && root.bar.shell && typeof root.bar.shell.summon === "function") {
+      root.bar.shell.summon("gmickel.gno-recall", payload)
+      console.info("gmickel.gno-recall: panel browse-collections summon payload=" + payload)
+      return
+    }
+    if (root.bar && root.bar.shell && typeof root.bar.shell.toggle === "function") {
+      root.bar.shell.toggle("gmickel.gno-recall", payload)
+      console.info("gmickel.gno-recall: panel browse-collections toggle payload=" + payload)
+      return
+    }
+    console.warn("gmickel.gno-recall: shell summon unavailable; leaving panel usable")
   }
 
   onOpenedChanged: {
@@ -580,6 +599,21 @@ Panel {
               onHovered: function(isHovered) {
                 if (isHovered)
                   root.selectKind("recall")
+              }
+            }
+
+            Button {
+              width: parent.width
+              text: "Browse collections"
+              bordered: true
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              fontSize: Style.font.caption
+              hasCursor: root.cursorActive && root.selectedKind() === "browse"
+              onClicked: root.summonOverlayBrowse()
+              onHovered: function(isHovered) {
+                if (isHovered)
+                  root.selectKind("browse")
               }
             }
           }

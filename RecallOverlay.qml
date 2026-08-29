@@ -18,6 +18,10 @@ Item {
   property int selectedIndex: 0
   property bool cursorActive: false
   property var targetScreen: null
+  property string browseLevel: "recents"
+  readonly property string levelRecents: "recents"
+  readonly property string levelCollections: "collections"
+  readonly property string levelDocs: "docs"
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -46,12 +50,39 @@ Item {
   readonly property string searchMessage: service ? String(service.searchMessage || "") : ""
   readonly property int searchGenerationId: service ? (service.searchGenerationId || 0) : 0
   readonly property int searchHitCount: service ? (service.searchHitCount || 0) : 0
-  readonly property bool showingSearch: filterText.trim() !== ""
+  readonly property bool inBrowse: browseLevel === levelCollections || browseLevel === levelDocs
+  readonly property string collectionsState: service ? String(service.collectionsState || "idle") : "idle"
+  readonly property bool collectionsLoading: service ? service.collectionsLoading === true : false
+  readonly property string collectionsMessage: service ? String(service.collectionsMessage || "") : ""
+  readonly property int collectionsGenerationId: service ? (service.collectionsGenerationId || 0) : 0
+  readonly property string lsState: service ? String(service.lsState || "idle") : "idle"
+  readonly property bool lsLoading: service ? service.lsLoading === true : false
+  readonly property string lsMessage: service ? String(service.lsMessage || "") : ""
+  readonly property int lsGenerationId: service ? (service.lsGenerationId || 0) : 0
+  readonly property string lsCollection: service ? String(service.lsCollection || "") : ""
+  readonly property int lsDocumentCount: service ? (service.lsDocumentCount || 0) : 0
+  readonly property bool lsHasMore: service ? service.lsHasMore === true : false
+  readonly property int lsRowCount: service && service.lsDocuments ? service.lsDocuments.length : 0
+  readonly property int lsPageSize: service ? (service.lsPageSize || 50) : 50
+  readonly property bool showingSearch: browseLevel === levelRecents
+    && filterText.trim() !== ""
     && filterText.trim() === searchQuery
     && (searchState === "ready" || searchState === "empty" || searchState === "error" || searchState === "timeout" || searchState === "loading")
   readonly property string emptyKind: resolveEmptyKind()
   readonly property string statusLine: resolveStatusLine()
   readonly property string actionStatus: service ? String(service.actionStatus || "") : ""
+
+  function parsePayload(payloadJson) {
+    var text = String(payloadJson || "").trim()
+    if (text === "" || text === "{}")
+      return ({})
+    try {
+      var value = JSON.parse(text)
+      return value && typeof value === "object" ? value : ({})
+    } catch (error) {
+      return ({})
+    }
+  }
 
   function open(payloadJson) {
     root.targetScreen = root.resolveFocusedScreen()
@@ -62,6 +93,11 @@ Item {
     root.disarmPointer()
     if (service && typeof service.cancelSearch === "function")
       service.cancelSearch("open")
+    var payload = root.parsePayload(payloadJson)
+    if (String(payload.mode || "") === "collections")
+      root.enterCollections("open-payload")
+    else
+      root.resetToRecents("open")
     root.rebuildDisplay()
     Qt.callLater(function() {
       if (keyCatcher)
@@ -70,19 +106,25 @@ Item {
     console.info("gmickel.gno-recall: overlay opened screen="
       + (root.targetScreen ? String(root.targetScreen.name || "") : "(default)")
       + " stale=" + root.isStale
-      + " recents=" + root.cachedRecents().length)
+      + " recents=" + root.cachedRecents().length
+      + " browseLevel=" + root.browseLevel
+      + " payloadMode=" + String(payload.mode || ""))
   }
 
   function close() {
     root.opened = false
     if (service && typeof service.cancelSearch === "function")
       service.cancelSearch("close")
+    if (service && typeof service.cancelLs === "function")
+      service.cancelLs("close")
   }
 
   function dismiss() {
     root.opened = false
     if (service && typeof service.cancelSearch === "function")
       service.cancelSearch("dismiss")
+    if (service && typeof service.cancelLs === "function")
+      service.cancelLs("dismiss")
     if (shell && typeof shell.hide === "function") {
       shell.hide(root.pluginId)
       return
@@ -203,7 +245,113 @@ Item {
     var title = rowTitle(row).toLowerCase()
     var tail = uriTail(row ? row.uri : "").toLowerCase()
     var uri = String(row && row.uri ? row.uri : "").toLowerCase()
-    return title.indexOf(needle) !== -1 || tail.indexOf(needle) !== -1 || uri.indexOf(needle) !== -1
+    var rel = String(row && row.relPath ? row.relPath : "").toLowerCase()
+    var name = String(row && row.collection ? row.collection : "").toLowerCase()
+    return title.indexOf(needle) !== -1
+      || tail.indexOf(needle) !== -1
+      || uri.indexOf(needle) !== -1
+      || rel.indexOf(needle) !== -1
+      || name.indexOf(needle) !== -1
+  }
+
+  function cachedCollections() {
+    var rows = service && service.collections ? service.collections : []
+    if ((!rows || rows.length === 0) && service && service.lastGoodCollections)
+      rows = service.lastGoodCollections
+    if (!rows || !rows.length)
+      return []
+    var out = []
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i])
+        out.push(rows[i])
+    }
+    return out
+  }
+
+  function cachedBrowseDocs() {
+    var rows = service && service.lsDocuments ? service.lsDocuments : []
+    if (!rows || !rows.length)
+      return []
+    var out = []
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i])
+        out.push(rows[i])
+    }
+    return out
+  }
+
+  function resetToRecents(reason) {
+    root.browseLevel = root.levelRecents
+    if (service && typeof service.cancelLs === "function")
+      service.cancelLs(reason || "recents")
+    console.info("gmickel.gno-recall: browse level=recents reason=" + String(reason || ""))
+  }
+
+  function enterCollections(reason) {
+    root.browseLevel = root.levelCollections
+    root.selectedIndex = 0
+    root.cursorActive = true
+    if (service && typeof service.cancelSearch === "function")
+      service.cancelSearch("browse-collections")
+    if (service && typeof service.cancelLs === "function")
+      service.cancelLs("browse-collections")
+    if (service && typeof service.runStatus === "function")
+      service.runStatus()
+    console.info("gmickel.gno-recall: browse level=collections reason=" + String(reason || "key"))
+    root.rebuildDisplay()
+  }
+
+  function enterDocs(collectionName, reason) {
+    var name = String(collectionName || "").trim()
+    if (name === "")
+      return
+    root.browseLevel = root.levelDocs
+    root.filterText = ""
+    root.selectedIndex = 0
+    root.cursorActive = true
+    if (service && typeof service.runLs === "function")
+      service.runLs(name, 0)
+    console.info("gmickel.gno-recall: browse level=docs collection=" + name
+      + " reason=" + String(reason || "enter"))
+    root.rebuildDisplay()
+  }
+
+  function loadMoreDocs() {
+    if (!service || typeof service.runLs !== "function")
+      return
+    if (!root.lsHasMore || root.lsLoading)
+      return
+    var name = root.lsCollection
+    if (name === "")
+      return
+    service.runLs(name, root.lsRowCount)
+    console.info("gmickel.gno-recall: browse load-more collection=" + name
+      + " offset=" + root.lsRowCount)
+  }
+
+  function goBackLevel() {
+    if (root.browseLevel === root.levelDocs) {
+      root.filterText = ""
+      root.enterCollections("back")
+      return true
+    }
+    if (root.browseLevel === root.levelCollections) {
+      root.filterText = ""
+      root.resetToRecents("back")
+      root.rebuildDisplay()
+      return true
+    }
+    return false
+  }
+
+  function handleEscape() {
+    if (root.filterText) {
+      root.setFilter("")
+      return
+    }
+    if (root.goBackLevel())
+      return
+    root.dismiss()
   }
 
   function normalizeRecent(row) {
@@ -215,7 +363,10 @@ Item {
       collection: rowCollection(row, "recent"),
       snippet: "",
       modifiedAt: row && row.modifiedAt ? String(row.modifiedAt) : "",
-      absPath: row && row.absPath ? String(row.absPath) : ""
+      absPath: row && row.absPath ? String(row.absPath) : "",
+      relPath: "",
+      documentCount: 0,
+      collectionPath: ""
     }
   }
 
@@ -228,11 +379,91 @@ Item {
       collection: row && row.collection ? String(row.collection) : collectionFromUri(row ? row.uri : ""),
       snippet: row && row.snippet ? String(row.snippet) : "",
       modifiedAt: row && row.modifiedAt ? String(row.modifiedAt) : "",
-      absPath: row && row.absPath ? String(row.absPath) : ""
+      absPath: row && row.absPath ? String(row.absPath) : "",
+      relPath: "",
+      documentCount: 0,
+      collectionPath: ""
+    }
+  }
+
+  function normalizeCollection(row) {
+    var count = row && row.documentCount !== undefined ? parseInt(row.documentCount, 10) : 0
+    return {
+      kind: "collection",
+      docid: "",
+      uri: "",
+      title: String(row && row.name ? row.name : ""),
+      collection: String(row && row.name ? row.name : ""),
+      snippet: "",
+      modifiedAt: "",
+      absPath: "",
+      relPath: "",
+      documentCount: isFinite(count) ? count : 0,
+      collectionPath: String(row && row.path ? row.path : "")
+    }
+  }
+
+  function normalizeBrowse(row) {
+    var title = rowTitle(row)
+    var relPath = String(row && row.relPath ? row.relPath : "")
+    return {
+      kind: "browse",
+      docid: String(row && row.docid ? row.docid : ""),
+      uri: String(row && row.uri ? row.uri : ""),
+      title: title,
+      collection: String(row && row.collection ? row.collection : root.lsCollection),
+      snippet: relPath,
+      modifiedAt: "",
+      absPath: String(row && row.absPath ? row.absPath : ""),
+      relPath: relPath,
+      documentCount: 0,
+      collectionPath: String(row && row.collectionPath ? row.collectionPath : "")
+    }
+  }
+
+  function loadMoreRow() {
+    return {
+      kind: "more",
+      docid: "",
+      uri: "",
+      title: "Load more…",
+      collection: root.lsCollection,
+      snippet: "Next " + root.lsPageSize + " documents",
+      modifiedAt: "",
+      absPath: "",
+      relPath: "",
+      documentCount: 0,
+      collectionPath: ""
     }
   }
 
   function resolveEmptyKind() {
+    if (browseLevel === levelCollections) {
+      if (collectionsState === "timeout")
+        return "status-timeout"
+      if (collectionsState === "error")
+        return "status-error"
+      if (collectionsState === "empty")
+        return "collections-empty"
+      if (collectionsState === "loading" && cachedCollections().length === 0)
+        return "collections-loading"
+      if (filterText.trim() !== "" && displayModel.count === 0)
+        return "filter-empty"
+      return ""
+    }
+    if (browseLevel === levelDocs) {
+      if (lsState === "timeout")
+        return "ls-timeout"
+      if (lsState === "error")
+        return "ls-error"
+      if (lsState === "empty")
+        return "collection-empty"
+      if (lsState === "loading" && cachedBrowseDocs().length === 0)
+        return "docs-loading"
+      if (filterText.trim() !== "" && displayModel.count === 0)
+        return "filter-empty"
+      return ""
+    }
     if (showingSearch) {
       if (searchState === "timeout")
         return "search-timeout"
@@ -264,6 +495,33 @@ Item {
   function resolveStatusLine() {
     if (actionStatus !== "")
       return actionStatus
+    if (browseLevel === levelCollections) {
+      if (collectionsState === "loading" && cachedCollections().length === 0)
+        return "Loading collections…"
+      if (collectionsState === "error" || collectionsState === "timeout")
+        return collectionsMessage !== "" ? collectionsMessage : "Could not list collections"
+      var n = cachedCollections().length
+      if (filterText.trim() !== "")
+        return "Collections — filtered"
+      return n > 0
+        ? "Collections — " + n + " · Enter opens · Esc back"
+        : "Collections"
+    }
+    if (browseLevel === levelDocs) {
+      var name = lsCollection !== "" ? lsCollection : "collection"
+      var total = lsDocumentCount
+      var page = Math.max(1, Math.ceil(lsRowCount / Math.max(1, lsPageSize)))
+      if (lsState === "loading" && lsRowCount === 0)
+        return name + " — loading documents…"
+      if (lsState === "error" || lsState === "timeout")
+        return lsMessage !== "" ? lsMessage : "Could not list documents"
+      if (lsState === "empty")
+        return name + " — empty"
+      var suffix = total > 0 ? total + " docs" : lsRowCount + " loaded"
+      if (lsLoading)
+        return name + " — " + suffix + " — loading page " + (page + (lsHasMore ? 1 : 0))
+      return name + " — " + suffix + " — page " + page
+    }
     if (isStale)
       return "Showing last good · " + cacheAgeLabel()
     if (showingSearch && searchState === "loading")
@@ -275,9 +533,11 @@ Item {
     if (showingSearch && (searchState === "error" || searchState === "timeout"))
       return searchMessage !== "" ? searchMessage : (searchState === "timeout" ? "Search timed out" : "Search failed")
     if (filterText.trim() !== "")
-      return "Filtered recents — Enter to search"
+      return "Filtered recents — Enter to search · Tab collections"
     var recents = cachedRecents().length
-    return recents > 0 ? recents + " recent · Enter file · Ctrl+Enter web" : ""
+    return recents > 0
+      ? recents + " recent · Tab collections · Enter file · Ctrl+Enter web"
+      : "Tab to browse collections"
   }
 
   function emptyCopy() {
@@ -285,8 +545,11 @@ Item {
       return "GNO is not initialized yet.\n\nRun gno init in a terminal, then summon Recall again."
     if (emptyKind === "empty-index")
       return "The index is empty.\n\nAdd documents to a GNO collection so Recall has something to search."
-    if (emptyKind === "filter-empty")
+    if (emptyKind === "filter-empty") {
+      if (inBrowse)
+        return "No matches for “" + filterText + "”"
       return "No matches for “" + filterText + "”\n\nEnter searches the full index."
+    }
     if (emptyKind === "search-empty")
       return "No results for “" + searchQuery + "”"
     if (emptyKind === "search-timeout")
@@ -297,6 +560,26 @@ Item {
         + "\n\nThe overlay is still open — edit the query and press Enter to try again."
     if (emptyKind === "search-loading")
       return "Searching…"
+    if (emptyKind === "collections-loading")
+      return "Loading collections…"
+    if (emptyKind === "collections-empty")
+      return "No collections in this index."
+    if (emptyKind === "status-timeout")
+      return "Could not list collections (timed out).\n\nThe overlay is still open — press Tab or Esc and try again."
+    if (emptyKind === "status-error")
+      return "Could not list collections."
+        + (collectionsMessage !== "" ? "\n\n" + collectionsMessage : "")
+        + "\n\nThe overlay is still open — press Tab or Esc and try again."
+    if (emptyKind === "docs-loading")
+      return "Loading documents…"
+    if (emptyKind === "collection-empty")
+      return "This collection is empty.\n\nEsc returns to the collections list."
+    if (emptyKind === "ls-timeout")
+      return "Could not list documents (timed out).\n\nThe overlay is still open — Esc goes back, Enter retries."
+    if (emptyKind === "ls-error")
+      return "Could not list documents."
+        + (lsMessage !== "" ? "\n\n" + lsMessage : "")
+        + "\n\nThe overlay is still open — Esc goes back, Enter retries."
     if (emptyKind === "loading")
       return "Loading GNO index status…"
     if (emptyKind === "plugin-error") {
@@ -311,14 +594,30 @@ Item {
   function rebuildDisplay() {
     displayModel.clear()
     var rows = []
-    if (showingSearch && (searchState === "ready" || searchState === "empty")) {
+    var needle = filterText.trim().toLowerCase()
+    if (browseLevel === levelCollections) {
+      var cols = cachedCollections()
+      for (var c = 0; c < cols.length; c++) {
+        var col = normalizeCollection(cols[c])
+        if (rowMatchesFilter(col, needle))
+          rows.push(col)
+      }
+    } else if (browseLevel === levelDocs) {
+      var docs = cachedBrowseDocs()
+      for (var d = 0; d < docs.length; d++) {
+        var doc = normalizeBrowse(docs[d])
+        if (rowMatchesFilter(doc, needle))
+          rows.push(doc)
+      }
+      if (lsHasMore && needle === "")
+        rows.push(loadMoreRow())
+    } else if (showingSearch && (searchState === "ready" || searchState === "empty")) {
       var hits = service && service.searchResults ? service.searchResults : []
       for (var i = 0; i < hits.length; i++) {
         if (hits[i])
           rows.push(normalizeSearch(hits[i]))
       }
     } else if (!showingSearch || searchState === "idle") {
-      var needle = filterText.trim().toLowerCase()
       var recents = cachedRecents()
       for (var r = 0; r < recents.length; r++) {
         if (rowMatchesFilter(recents[r], needle))
@@ -356,6 +655,8 @@ Item {
   }
 
   function commitSearch() {
+    if (root.inBrowse)
+      return
     var q = root.filterText.trim()
     if (q === "")
       return
@@ -408,14 +709,31 @@ Item {
 
   function activateIndex(index) {
     var row = rowAt(index)
-    if (!row || !service || typeof service.openSourceFile !== "function")
+    if (!row)
+      return
+    if (String(row.kind || "") === "collection") {
+      root.enterDocs(row.collection || row.title, "enter")
+      return
+    }
+    if (String(row.kind || "") === "more") {
+      root.loadMoreDocs()
+      return
+    }
+    if (browseLevel === levelDocs && (lsState === "error" || lsState === "timeout") && lsRowCount === 0) {
+      if (service && typeof service.runLs === "function" && lsCollection !== "")
+        service.runLs(lsCollection, 0)
+      return
+    }
+    if (!service || typeof service.openSourceFile !== "function")
       return
     service.openSourceFile(row.absPath)
   }
 
   function openWebAt(index) {
     var row = rowAt(index)
-    if (!row || !service || typeof service.openWebUi !== "function")
+    if (!row || String(row.kind || "") === "collection" || String(row.kind || "") === "more")
+      return
+    if (!service || typeof service.openWebUi !== "function")
       return
     service.openWebUi(row.uri)
   }
@@ -457,7 +775,10 @@ Item {
       collection: "qa",
       snippet: "",
       modifiedAt: "",
-      absPath: ""
+      absPath: "",
+      relPath: "",
+      documentCount: 0,
+      collectionPath: ""
     })
     root.selectedIndex = 0
     root.cursorActive = true
@@ -497,6 +818,22 @@ Item {
       ? service.webDocUrl(selected.uri)
       : ""
     base.targetScreen = root.targetScreen ? String(root.targetScreen.name || "") : ""
+    base.browseLevel = root.browseLevel
+    base.collectionsState = root.collectionsState
+    base.collectionsMessage = root.collectionsMessage
+    base.collectionsLoading = root.collectionsLoading
+    base.collectionsCount = root.cachedCollections().length
+    base.lsState = root.lsState
+    base.lsMessage = root.lsMessage
+    base.lsLoading = root.lsLoading
+    base.lsCollection = root.lsCollection
+    base.lsDocumentCount = root.lsDocumentCount
+    base.lsRowCount = root.lsRowCount
+    base.lsHasMore = root.lsHasMore
+    base.lsOffset = service ? (service.lsOffset || 0) : 0
+    base.selectedKind = selected ? String(selected.kind || "") : ""
+    base.selectedRelPath = selected ? String(selected.relPath || "") : ""
+    base.selectedCollection = selected ? String(selected.collection || "") : ""
     return JSON.stringify(base)
   }
 
@@ -504,6 +841,12 @@ Item {
   onSearchStateChanged: if (opened) rebuildDisplay()
   onSearchGenerationIdChanged: if (opened) rebuildDisplay()
   onSearchHitCountChanged: if (opened) rebuildDisplay()
+  onCollectionsGenerationIdChanged: if (opened && browseLevel === levelCollections) rebuildDisplay()
+  onCollectionsStateChanged: if (opened && browseLevel === levelCollections) rebuildDisplay()
+  onLsGenerationIdChanged: if (opened && browseLevel === levelDocs) rebuildDisplay()
+  onLsStateChanged: if (opened && browseLevel === levelDocs) rebuildDisplay()
+  onLsRowCountChanged: if (opened && browseLevel === levelDocs) rebuildDisplay()
+  onLsHasMoreChanged: if (opened && browseLevel === levelDocs) rebuildDisplay()
 
   ListModel { id: displayModel }
 
@@ -561,13 +904,17 @@ Item {
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
           if (event.key === Qt.Key_Escape) {
-            if (root.filterText)
-              root.setFilter("")
-            else
-              root.dismiss()
+            root.handleEscape()
+            event.accepted = true
+          } else if (event.key === Qt.Key_Backspace && root.filterText === "" && root.inBrowse) {
+            root.goBackLevel()
             event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
+            event.accepted = true
+          } else if ((event.key === Qt.Key_Tab || ((event.key === Qt.Key_B) && (event.modifiers & Qt.ControlModifier)))
+                     && root.browseLevel === root.levelRecents) {
+            root.enterCollections(event.key === Qt.Key_Tab ? "tab" : "ctrl-b")
             event.accepted = true
           } else if (event.key === Qt.Key_Up) {
             root.select(-1)
@@ -582,7 +929,20 @@ Item {
             root.select(-6)
             event.accepted = true
           } else if (event.key === Qt.Key_PageDown) {
+            if (root.browseLevel === root.levelDocs && root.lsHasMore) {
+              var last = displayModel.count - 1
+              var atMore = last >= 0 && root.rowAt(last) && String(root.rowAt(last).kind) === "more"
+                && root.selectedIndex >= Math.max(0, last - 1)
+              if (atMore) {
+                root.loadMoreDocs()
+                event.accepted = true
+                return
+              }
+            }
             root.select(6)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Right && root.browseLevel === root.levelDocs && root.lsHasMore) {
+            root.loadMoreDocs()
             event.accepted = true
           } else if (event.key === Qt.Key_Home) {
             root.selectAbsolute(0)
@@ -594,6 +954,12 @@ Item {
             if (event.modifiers & Qt.ControlModifier) {
               if (displayModel.count > 0)
                 root.openWebAt(root.selectedIndex)
+            } else if (root.inBrowse) {
+              if (displayModel.count > 0)
+                root.activateIndex(root.selectedIndex)
+              else if (root.browseLevel === root.levelDocs && (root.lsState === "error" || root.lsState === "timeout")
+                       && root.lsCollection !== "" && root.service && typeof root.service.runLs === "function")
+                root.service.runLs(root.lsCollection, 0)
             } else if (displayModel.count > 0 && (root.showingSearch || root.filterText.trim() === "")) {
               root.activateIndex(root.selectedIndex)
             } else if (root.filterText.trim() !== "") {
@@ -631,7 +997,11 @@ Item {
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              text: root.filterText || "Recall recent documents…"
+              text: root.filterText || (root.browseLevel === root.levelCollections
+                ? "Filter collections…"
+                : (root.browseLevel === root.levelDocs
+                  ? ("Filter " + (root.lsCollection || "documents") + "…")
+                  : "Recall recent documents…"))
               color: root.foreground
               opacity: root.filterText ? 1 : 0.58
               font.family: root.fontFamily
@@ -644,7 +1014,10 @@ Item {
             visible: root.statusLine !== ""
             width: parent.width
             text: root.statusLine
-            color: root.actionStatus !== "" || root.isStale || root.emptyKind === "search-error" || root.emptyKind === "search-timeout"
+            color: root.actionStatus !== "" || root.isStale
+              || root.emptyKind === "search-error" || root.emptyKind === "search-timeout"
+              || root.emptyKind === "status-error" || root.emptyKind === "status-timeout"
+              || root.emptyKind === "ls-error" || root.emptyKind === "ls-timeout"
               ? Color.urgent
               : root.foreground
             opacity: 0.72
@@ -678,17 +1051,29 @@ Item {
               required property string uri
               required property string kind
               required property string absPath
+              required property string relPath
+              required property int documentCount
 
               readonly property bool hasCursor: root.cursorActive && index === root.selectedIndex
-              readonly property bool canOpenFile: String(absPath || "").trim() !== ""
+              readonly property bool isCollection: kind === "collection"
+              readonly property bool isMore: kind === "more"
+              readonly property bool canOpenFile: !isCollection && !isMore && String(absPath || "").trim() !== ""
               readonly property string metaText: {
+                if (isMore)
+                  return snippet !== "" ? snippet : "Page Down or Enter"
+                if (isCollection)
+                  return documentCount + (documentCount === 1 ? " document" : " documents")
                 var bits = []
-                if (collection !== "")
+                if (kind === "browse" && relPath !== "")
+                  bits.push(relPath)
+                else if (collection !== "")
                   bits.push(collection)
                 var stamp = root.formatStamp(modifiedAt)
                 if (stamp !== "")
                   bits.push(stamp)
-                if (!canOpenFile)
+                if (kind !== "browse" && !canOpenFile)
+                  bits.push("no file path")
+                if (kind === "browse" && !canOpenFile)
                   bits.push("no file path")
                 return bits.join(" · ")
               }
@@ -765,7 +1150,10 @@ Item {
             Text {
               width: parent.width
               text: root.emptyCopy()
-              color: root.emptyKind === "search-error" || root.emptyKind === "search-timeout" || root.emptyKind === "plugin-error"
+              color: root.emptyKind === "search-error" || root.emptyKind === "search-timeout"
+                || root.emptyKind === "status-error" || root.emptyKind === "status-timeout"
+                || root.emptyKind === "ls-error" || root.emptyKind === "ls-timeout"
+                || root.emptyKind === "plugin-error"
                 ? Color.urgent
                 : root.foreground
               opacity: 0.8
