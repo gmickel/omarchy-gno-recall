@@ -1,8 +1,8 @@
 # GNO Recall
 
-An [Omarchy](https://omarchy.org/) shell plugin that surfaces [GNO](https://gno.sh) index activity from the bar.
+[GNO](https://gno.sh) is a local-first knowledge engine. It indexes notes, documents, and code into collections and searches them with BM25 keyword, semantic, and hybrid retrieval, plus Q&A, through a CLI, an MCP server, a REST API, and a web UI. Indexing and search run on your machine with local GGUF models, with no cloud backend and no telemetry.
 
-This repository is the plugin source. The bar widget is quiet when the index is healthy (a history glyph only) and adds a distinct shape plus color when there is backlog, staleness, or a setup/degraded fault. Left-click opens an anchored index panel; Super+R (after the optional keybind script) or `omarchy-shell shell toggle gmickel.gno-recall` summons the recall overlay.
+This [Omarchy](https://omarchy.org/) plugin surfaces that index from the bar. The bar widget is quiet when the index is healthy (a history glyph only) and adds a distinct shape plus color when there is backlog, staleness, or a setup/degraded fault. Left-click opens an anchored index panel; Super+R (after the optional keybind script) or `omarchy-shell shell toggle gmickel.gno-recall` summons the recall overlay.
 
 ![Recall overlay searching a demo index, with the match term highlighted](assets/screenshots/overlay-search.png)
 
