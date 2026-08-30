@@ -33,11 +33,14 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   property string fontFamily: Style.font.menuFamily
   property int contentMargin: Style.spacing.panelPadding
-  property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
-  property int contentSpacing: Style.spacing.md
+  property int headerHeight: Math.max(Style.space(26), Style.font.heading + Style.space(4))
+  property int contentSpacing: Style.spacing.sm
   property int cardWidth: Math.min(Style.space(720), panel.width - Style.gapsOut * 2)
   property int cardHeight: Math.min(Style.space(560), panel.height - Style.gapsOut * 2)
-  property int rowHeight: Math.max(Style.space(72), Style.font.body + Style.font.caption * 2 + Style.spacing.rowPaddingX * 3)
+  property int rowPadY: Style.space(5)
+  property int rowInnerSpacing: 1
+  property int rowListSpacing: Style.space(2)
+  readonly property int rowMinHeight: Style.font.title + Style.font.caption + rowInnerSpacing + rowPadY * 2
 
   readonly property string pluginId: (manifest && manifest.id) ? String(manifest.id) : "gmickel.gno-recall"
   readonly property var liveSnapshot: service ? service.snapshot : null
@@ -226,6 +229,40 @@ Item {
       return rel
     var text = String(value || "")
     return text !== "" ? text : ""
+  }
+
+  function colorToHex(value) {
+    var c = Qt.color(value)
+    var r = Math.round(c.r * 255)
+    var g = Math.round(c.g * 255)
+    var b = Math.round(c.b * 255)
+    function hex(n) {
+      var s = n.toString(16)
+      return s.length === 1 ? "0" + s : s
+    }
+    return "#" + hex(r) + hex(g) + hex(b)
+  }
+
+  function styleSnippet(raw, highlightColor) {
+    var collapsed = String(raw || "").replace(/\s+/g, " ").trim()
+    var budget = 240
+    if (collapsed.length > budget) {
+      // Drop any tag cut in half by the budget, then re-balance an
+      // unterminated <mark> so the styled conversion below stays paired.
+      collapsed = collapsed.slice(0, budget).replace(/<[^>]*$/, "")
+      var opens = (collapsed.match(/<mark>/g) || []).length
+      var closes = (collapsed.match(/<\/mark>/g) || []).length
+      if (opens > closes)
+        collapsed += "</mark>"
+    }
+    var escaped = collapsed
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+    var color = colorToHex(highlightColor || Color.accent)
+    return escaped
+      .replace(/&lt;mark&gt;/g, "<b><font color=\"" + color + "\">")
+      .replace(/&lt;\/mark&gt;/g, "</font></b>")
   }
 
   function cacheAgeLabel() {
@@ -1017,7 +1054,7 @@ Item {
 
         Column {
           width: parent.width
-          spacing: Style.space(4)
+          spacing: Style.space(2)
 
           Rectangle {
             width: parent.width
@@ -1062,14 +1099,14 @@ Item {
         Item {
           width: parent.width
           height: parent.height - root.headerHeight - root.contentSpacing
-            - (root.statusLine !== "" ? Style.font.caption + Style.space(4) : 0)
+            - (root.statusLine !== "" ? Style.font.caption + Style.space(2) : 0)
 
           ListView {
             id: resultList
             anchors.fill: parent
             model: displayModel
             clip: true
-            spacing: Style.space(4)
+            spacing: root.rowListSpacing
             boundsBehavior: Flickable.StopAtBounds
             visible: displayModel.count > 0
 
@@ -1116,17 +1153,19 @@ Item {
               }
 
               width: ListView.view.width
-              height: root.rowHeight
+              implicitHeight: Math.max(root.rowMinHeight, rowColumn.implicitHeight + root.rowPadY * 2)
+              height: implicitHeight
               radius: root.cornerRadius
               color: hasCursor ? root.selectedBackground : "transparent"
 
               Column {
-                anchors.fill: parent
+                id: rowColumn
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: Style.space(12)
                 anchors.rightMargin: Style.space(12)
-                anchors.topMargin: Style.space(8)
-                anchors.bottomMargin: Style.space(8)
-                spacing: Style.space(2)
+                spacing: root.rowInnerSpacing
 
                 Text {
                   width: parent.width
@@ -1152,7 +1191,8 @@ Item {
                 Text {
                   width: parent.width
                   visible: row.snippet !== ""
-                  text: row.snippet.replace(/\s+/g, " ").trim()
+                  text: root.styleSnippet(row.snippet, Color.accent)
+                  textFormat: Text.StyledText
                   color: row.hasCursor ? root.selectedText : root.foreground
                   opacity: 0.78
                   font.family: root.fontFamily

@@ -4,6 +4,18 @@ An [Omarchy](https://omarchy.org/) shell plugin that surfaces [GNO](https://gno.
 
 This repository is the plugin source. The bar widget is quiet when the index is healthy (a history glyph only) and adds a distinct shape plus color when there is backlog, staleness, or a setup/degraded fault. Left-click opens an anchored index panel; Super+R (after the optional keybind script) or `omarchy-shell shell toggle gmickel.gno-recall` summons the recall overlay.
 
+![Recall overlay searching a demo index, with the match term highlighted](assets/screenshots/overlay-search.png)
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Recent documents in the recall overlay](assets/screenshots/overlay-recents.png) Overlay: recent documents | ![Deep search results in the recall overlay](assets/screenshots/overlay-deep-search.png) Overlay: Shift+Enter deep search |
+| ![Collection list in the recall overlay](assets/screenshots/overlay-browse.png) Overlay: browse collections | ![Documents inside one collection](assets/screenshots/overlay-browse-docs.png) Overlay: documents in a collection |
+| ![Anchored index panel with health, counts, and recents](assets/screenshots/panel.png) Panel: health, counts, recents | ![Quiet bar widget, second glyph from the left](assets/screenshots/bar-widget.png) Bar widget (history glyph), quiet when healthy |
+
+All screenshots show a demo index.
+
 ## Requirements
 
 - Omarchy with shell plugin support

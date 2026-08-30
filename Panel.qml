@@ -402,7 +402,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(content.implicitHeight, Style.space(620))
+    contentHeight: panel.fittedContentHeight(content.implicitHeight, Style.space(900))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -666,7 +666,7 @@ Panel {
                 required property var modelData
                 required property int index
                 width: parent.width
-                implicitHeight: recentColumn.implicitHeight + Style.space(10)
+                implicitHeight: recentColumn.implicitHeight + Style.space(6)
                 foreground: root.contentForeground
                 hasCursor: root.cursorActive && root.selectedKind() === "recent" && root.selectedRecentIndex() === index
 
@@ -688,7 +688,7 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                   anchors.leftMargin: Style.space(8)
                   anchors.rightMargin: Style.space(8)
-                  spacing: Style.space(2)
+                  spacing: 1
 
                   Text {
                     width: parent.width
