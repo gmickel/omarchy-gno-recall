@@ -10,7 +10,17 @@ This repository is the plugin source. The bar widget is quiet when the index is 
 - [gno](https://github.com/gmickel/gno) **>= 1.36.0** on `PATH`, or an absolute path in the widget's **Path to gno** setting
 - A Nerd Font (Omarchy includes one by default)
 
-`gno peek --json` is the snapshot path. Committed overlay search is a second argv-array call: `gno search <query> --json --no-project-affinity -n 20` (BM25). Shift+Enter runs a deeper hybrid pass: `gno query <query> --json --no-project-affinity -n 20` at balanced depth (embeddings + expansion + rerank; no `--depth` flag). Collection browse uses `gno status --json` (collections list) and `gno ls <collection> --json -n 50 --offset <n>` (paginated documents). Released gno 1.36.0 ships `gno peek` (`schemaVersion` `peek@1.0`) and the GNO web UI `/doc?uri=` deep link (plus `source.absPath` on search hits). Older gno builds fail discovery with an `unknown-command` state instead of crashing the shell. The plugin never calls `gno get` or `gno serve`.
+`gno peek --json` is the snapshot path. Peek `serve.running` is true only for
+`gno serve --detach`. A foreground serve is not detected. Overlay search is a
+second argv-array call: `gno search <query> --json --no-project-affinity -n 20`
+(BM25, about 0.4s). Shift+Enter runs hybrid `gno query <query> --json --no-project-affinity -n 20`
+at balanced depth (embeddings + expansion + rerank, 90s timeout, no `--depth`
+flag). Collection browse uses `gno status --json` (collections list) and
+`gno ls <collection> --json -n 50 --offset <n>` (paginated documents). gno
+1.36.0 ships `gno peek` (`schemaVersion` `peek@1.0`), the Web UI `/doc?uri=`
+deep link, and `source.absPath` on search hits. Older gno builds fail discovery
+with an `unknown-command` state instead of crashing the shell. The plugin never
+calls `gno get` or `gno serve`.
 
 ## Privilege boundary
 
@@ -90,13 +100,13 @@ The last-good peek snapshot (titles, paths, snippets, and the last successful se
 
 `Service.qml` is the only `Process` owner. It resolves `gno` from the widget `gnoPath` (absolute) or `PATH`, then invokes `gno peek --json` as an argv array via `Quickshell.Io.Process` + `SplitParser` (empty `splitMarker`, raw-chunk accumulation with a 512KiB kill bound). Bar and overlay surfaces look the service up with `bar.shell.serviceFor("gmickel.gno-recall")` — third-party plugins must not use `firstPartyServiceFor`.
 
-The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). It opens on the focused monitor, grabs exclusive keyboard focus, and shows cached peek `recent[]` immediately. Typing filters titles and URI tails in memory — no `gno` subprocess per keystroke. Enter on a query (before results land) runs exactly one BM25 search through `Service.qml`; Shift+Enter runs the slower hybrid `gno query` instead (visible “Deep searching…” copy, then “N deep hits”). A new Enter, Shift+Enter, Esc, or a query change cancels the in-flight Process and drops late JSON via one shared search generation id, so a late deep result cannot clobber a newer fast search.
+The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-recall`). It opens on the focused monitor, grabs exclusive keyboard focus, and shows cached peek `recent[]` immediately. Typing filters titles and URI tails in memory. There is no `gno` subprocess per keystroke. Enter on a typed query runs BM25 `gno search` through `Service.qml` (about 0.4s). Shift+Enter runs hybrid `gno query` at balanced depth with a 90s timeout. The overlay shows `Deep searching… (embeddings + rerank)`, then `N deep hits`. A new Enter, Shift+Enter, Esc, or a query change cancels the in-flight Process. One shared search generation id drops late JSON, so a late deep result cannot clobber a newer fast search.
 
 **Browse collections** is a second overlay mode. From recents, **Tab** (or **Ctrl+B**) lists every collection from `gno status --json` (name + document count). Enter drills into a paginated `gno ls` document list (50 per page). A **Load more…** row (Enter, Right, or Page Down at the end) appends the next offset. Typing still filters in memory only — collection names on the list, already-loaded document titles/paths inside a collection. Esc walks back one step at a time: clear filter → documents back to collections → collections back to recents → dismiss via `shell.hide`. Backspace with an empty filter also steps back a browse level without dismissing.
 
 `omarchy-shell shell summon gmickel.gno-recall '{"mode":"collections"}'` opens the overlay directly on the collections list. The panel **Browse collections** action uses that payload.
 
-Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits, `source.relPath` for browsed documents), snippet, and modified time. Browsed documents derive `absPath` by joining the collection's absolute `path` with `source.relPath` — the plugin never calls `gno get`. Arrow keys (and `j`/`k` when the filter is empty) move the highlight. Search, status, and ls failure/timeout stay inline and keep the overlay interactive; empty collections and empty-but-initialized indexes have distinct copy from uninitialized guidance.
+Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits, `source.relPath` for browsed documents), snippet, and modified time. gno 1.36.1 and later skip leading YAML frontmatter in those snippets. Browsed documents derive `absPath` by joining the collection's absolute `path` with `source.relPath`. The plugin never calls `gno get`. Arrow keys (and `j`/`k` when the filter is empty) move the highlight. Search, status, and ls failure/timeout stay inline and keep the overlay interactive. Empty collections and empty-but-initialized indexes have distinct copy from uninitialized guidance.
 
 ### Summon: Super+R, IPC, and alternatives
 
@@ -129,7 +139,7 @@ Both the overlay rows and the panel recents list share `Service.qml`'s `openDocu
 
 | Condition | Outcome |
 | --- | --- |
-| `absPath` present or joined from `collection.path` + `source.relPath` | Open the source file (text: `$VISUAL` / omawrite; else `gio open` / `xdg-open`) |
+| `absPath` present or joined from `collection.path` + `source.relPath` | Open the source file through the default opener chain below |
 | No `absPath`, `serve.running` | Open `{serve.url}/doc?uri=<encodeURIComponent(uri)>` (success; brief “Opened in web UI”) |
 | No `absPath`, serve down | Notice: `No file path — start gno serve --detach to open in the web UI.` Nothing is spawned. |
 
@@ -151,14 +161,25 @@ Both the overlay rows and the panel recents list share `Service.qml`'s `openDocu
 | --- | --- | --- | --- |
 | Type / Backspace | Filter recents in memory | Filter collection names | Filter loaded rows |
 | Enter | Search (BM25) if a filter is typed; otherwise open the document | Open the highlighted collection | Open the document (or load the next page on **Load more…**) |
-| Shift+Enter | Deep search (`gno query`, balanced hybrid) if a filter is typed; no-op on an empty query | — | — |
+| Shift+Enter | Deep search (`gno query`, balanced hybrid, 90s) if a filter is typed; no-op on an empty query | — | — |
 | Ctrl+Enter | Open web UI | — | Open web UI |
 | Tab / Ctrl+B | Switch to collections | — | — |
 | Esc | Clear filter, then dismiss | Clear filter, then back to recents | Clear filter, then back to collections |
 | Backspace (empty filter) | — | Back to recents | Back to collections |
 | Page Down / Right | Jump highlight | Jump highlight | Load more when the page is full |
 
-File-open uses the row's `absPath` (peek recents use `absPath`; search hits use `source.absPath`; browsed docs join `collection.path` + `source.relPath`). With no `fileOpener` override, a login-shell trampoline (`bash -lc`, so **not** `.zshrc`) picks the handler: text-like files (`md`, `markdown`, `txt`, `org`, `rst`, `adoc`, `text`) honor `$VISUAL` when it is set in that environment (TUI editors such as nvim via `omarchy-launch-tui` so a terminal is visible; GUI editors via `uwsm-app`), otherwise **omawrite** on a stock Omarchy install, then `omarchy-launch-editor`, then `gio open` / `xdg-open`. Non-text files go straight to `gio open` (proper mime) or `xdg-open`. Raw `xdg-open` alone is what used to open markdown as headless nvim. Set `VISUAL` in a login-visible place (`~/.profile`, `.zprofile`, or uwsm env) if you want your editor to win for text docs. The `fileOpener` override still skips the chain. Explicit web-open (Ctrl+Enter / **w**) launches `omarchy-launch-browser` at `{serve.url}/doc?uri=<encodeURIComponent(uri)>`. If serve is down, that key shows a short non-blocking notice (`Web UI is down. Start it with: gno serve --detach`) and spawns nothing. A spawn failure of the opener is the same kind of notice; the overlay and panel stay interactive.
+File-open uses the row's `absPath` (peek recents use `absPath`; search hits use `source.absPath`; browsed docs join `collection.path` + `source.relPath`).
+
+**Default opener chain** (no `fileOpener` override). Launch env is `bash -lc`, so a `.zshrc`-only `VISUAL` is not seen. Set `VISUAL` in `~/.profile`, `.zprofile`, or uwsm env if the editor should win for text docs.
+
+| Kind | Order |
+| --- | --- |
+| Text-like (`md`, `markdown`, `txt`, `org`, `rst`, `adoc`, `text`) | `$VISUAL` when present in that login env (TUI editors such as nvim via `omarchy-launch-tui`; GUI editors via `uwsm-app`), then **omawrite**, then `omarchy-launch-editor`, then `gio open`, then `xdg-open` |
+| Other files | `gio open`, then `xdg-open` |
+
+Raw `xdg-open` alone used to open markdown as headless nvim. A `fileOpener` override skips the chain.
+
+Explicit web-open (Ctrl+Enter / **w**) launches `omarchy-launch-browser` at `{serve.url}/doc?uri=<encodeURIComponent(uri)>`. Peek reports serve only for `gno serve --detach`. If serve is down, that key shows `Web UI is down. Start it with: gno serve --detach` and spawns nothing. A spawn failure of the opener is the same kind of notice. The overlay and panel stay interactive.
 
 Left-clicking the bar widget toggles the nested `Panel.qml` loader — it does not call that overlay IPC path. The anchored popup is not a manifest `panel` kind, so it cannot steal the overlay toggle.
 
