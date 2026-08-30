@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "gmickel.gno-recall",
   "name": "GNO Recall",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "author": "Gordon Mickel",
   "license": "MIT",
   "description": "Surface GNO index activity in the Omarchy bar.",
