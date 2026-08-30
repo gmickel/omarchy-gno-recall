@@ -19,7 +19,7 @@ All screenshots show a demo index.
 ## Requirements
 
 - Omarchy with shell plugin support
-- [gno](https://github.com/gmickel/gno) **>= 1.36.0** on `PATH`, or an absolute path in the widget's **Path to gno** setting
+- [gno](https://github.com/gmickel/gno) **>= 1.36.0** on `PATH`, or an absolute path in the widget's **Path to gno** setting. gno runs on [Bun](https://bun.sh/): `bun install -g @gmickel/gno`
 - A Nerd Font (Omarchy includes one by default)
 
 `gno peek --json` is the snapshot path. Peek `serve.running` is true only for
