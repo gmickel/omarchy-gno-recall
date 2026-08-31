@@ -989,9 +989,6 @@ Item {
           } else if (event.key === Qt.Key_Down) {
             root.select(1)
             event.accepted = true
-          } else if ((event.key === Qt.Key_J || event.key === Qt.Key_K) && root.filterText === "") {
-            root.select(event.key === Qt.Key_J ? 1 : -1)
-            event.accepted = true
           } else if (event.key === Qt.Key_PageUp) {
             root.select(-6)
             event.accepted = true

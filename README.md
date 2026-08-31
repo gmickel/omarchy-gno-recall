@@ -118,7 +118,7 @@ The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-r
 
 `omarchy-shell shell summon gmickel.gno-recall '{"mode":"collections"}'` opens the overlay directly on the collections list. The panel **Browse collections** action uses that payload.
 
-Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits, `source.relPath` for browsed documents), snippet, and modified time. gno 1.36.1 and later skip leading YAML frontmatter in those snippets. Browsed documents derive `absPath` by joining the collection's absolute `path` with `source.relPath`. The plugin never calls `gno get`. Arrow keys (and `j`/`k` when the filter is empty) move the highlight. Search, status, and ls failure/timeout stay inline and keep the overlay interactive. Empty collections and empty-but-initialized indexes have distinct copy from uninitialized guidance.
+Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits, `source.relPath` for browsed documents), snippet, and modified time. gno 1.36.1 and later skip leading YAML frontmatter in those snippets. Browsed documents derive `absPath` by joining the collection's absolute `path` with `source.relPath`. The plugin never calls `gno get`. Arrow keys move the highlight. `j` and `k` type into the filter like any other letter. Search, status, and ls failure/timeout stay inline and keep the overlay interactive. Empty collections and empty-but-initialized indexes have distinct copy from uninitialized guidance.
 
 ### Summon: Super+R, IPC, and alternatives
 
@@ -171,7 +171,7 @@ Both the overlay rows and the panel recents list share `Service.qml`'s `openDocu
 
 | Key | Recents | Collections | Documents |
 | --- | --- | --- | --- |
-| Type / Backspace | Filter recents in memory | Filter collection names | Filter loaded rows |
+| Type / Backspace | Filter recents in memory (`j`/`k` type, they do not move the highlight) | Filter collection names | Filter loaded rows |
 | Enter | Search (BM25) if a filter is typed; otherwise open the document | Open the highlighted collection | Open the document (or load the next page on **Load more…**) |
 | Shift+Enter | Deep search (`gno query`, balanced hybrid, 90s) if a filter is typed; no-op on an empty query | — | — |
 | Ctrl+Enter | Open web UI | — | Open web UI |
