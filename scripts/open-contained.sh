@@ -35,15 +35,17 @@ if [[ ! -f $resolved || -L $resolved ]]; then
   fi
 fi
 
-if [[ -n $root_arg ]]; then
-  if ! root=$(realpath -e -- "$root_arg" 2>/dev/null); then
-    echo "error: collection root does not exist" >&2
-    exit 1
-  fi
-  if [[ $resolved != "$root" && $resolved != "$root"/* ]]; then
-    echo "error: path escapes collection root" >&2
-    exit 1
-  fi
+if [[ -z $root_arg ]]; then
+  echo "error: collection root is required" >&2
+  exit 1
+fi
+if ! root=$(realpath -e -- "$root_arg" 2>/dev/null); then
+  echo "error: collection root does not exist" >&2
+  exit 1
+fi
+if [[ $resolved != "$root" && $resolved != "$root"/* ]]; then
+  echo "error: path escapes collection root" >&2
+  exit 1
 fi
 
 exec "$@" "$resolved"

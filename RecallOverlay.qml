@@ -630,7 +630,7 @@ Item {
       var detail = service && service.message ? String(service.message) : ""
       return "Could not read the GNO index."
         + (detail !== "" ? "\n\n" + detail : "")
-        + "\n\nSet Path to gno in the widget settings, or install gno >= 1.36.0 on PATH."
+        + "\n\nSet Path to gno in the widget settings, or install gno >= " + (service && service.supportedGnoFloor ? service.supportedGnoFloor : "1.39.2") + " on PATH."
     }
     return ""
   }

@@ -224,7 +224,7 @@ Panel {
       var detail = service && service.message ? String(service.message) : ""
       return "Could not read the GNO index."
         + (detail !== "" ? "\n\n" + detail : "")
-        + "\n\nSet Path to gno in the widget settings, or install gno >= 1.36.0 on PATH."
+        + "\n\nSet Path to gno in the widget settings, or install gno >= " + (service && service.supportedGnoFloor ? service.supportedGnoFloor : "1.39.2") + " on PATH."
     }
     return ""
   }
@@ -450,6 +450,7 @@ Panel {
           Text {
             width: parent.width
             text: root.healthLine()
+            textFormat: Text.PlainText
             color: root.isStale || root.bodyKind === "plugin-error" ? Color.urgent : root.dim
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.bodySmall
@@ -460,6 +461,7 @@ Panel {
             visible: root.isStale
             width: parent.width
             text: "Showing last good snapshot · " + root.cacheAgeLabel()
+            textFormat: Text.PlainText
             color: Color.urgent
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
@@ -529,6 +531,7 @@ Panel {
             visible: root.bodyKind === "index" || root.bodyKind === "empty"
             width: parent.width
             text: "Last indexed " + root.formatStamp(root.displaySnapshot ? root.displaySnapshot.lastIndexedAt : "")
+            textFormat: Text.PlainText
             color: root.dim
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
@@ -538,6 +541,7 @@ Panel {
             visible: root.bodyKind !== "index"
             width: parent.width
             text: root.bodyCopy()
+            textFormat: Text.PlainText
             color: root.bodyKind === "plugin-error" ? Color.urgent : root.dim
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.body
@@ -584,6 +588,7 @@ Panel {
               visible: root.serveRunning && root.serveUrl !== ""
               width: parent.width
               text: root.serveUrl
+              textFormat: Text.PlainText
               color: root.dim
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.caption

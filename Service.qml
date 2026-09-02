@@ -14,7 +14,7 @@ Item {
   property var settings: ({})
 
   readonly property string pluginId: "gmickel.gno-recall"
-  readonly property string supportedGnoFloor: "1.36.0"
+  readonly property string supportedGnoFloor: "1.39.2"
   readonly property string peekSchemaVersion: "peek@1.0"
   readonly property string supportedPeekSchemaMajor: "peek@1.x"
   readonly property int maxPeekStdoutChars: 524288
@@ -816,6 +816,8 @@ Item {
       + " gnoVersion=" + data.gnoVersion
       + " initialized=" + data.initialized
       + " documents=" + (data.counts && data.counts.documents !== undefined ? data.counts.documents : "?"))
+    if (data.initialized === true)
+      runStatus()
     finishIdle()
   }
 
@@ -1804,6 +1806,8 @@ Item {
     if (path === "")
       return showMissingPathGuidance("file")
     var root = String(collectionPath || "").trim()
+    if (root === "")
+      return showMissingPathGuidance("file")
     var contained = [
       pluginScript("scripts/open-contained.sh"),
       root,
