@@ -1068,6 +1068,7 @@ Item {
                 : (root.browseLevel === root.levelDocs
                   ? ("Filter " + (root.lsCollection || "documents") + "…")
                   : "Recall recent documents…"))
+              textFormat: Text.PlainText
               color: root.foreground
               opacity: root.filterText ? 1 : 0.58
               font.family: root.fontFamily
@@ -1080,6 +1081,7 @@ Item {
             visible: root.statusLine !== ""
             width: parent.width
             text: root.statusLine
+            textFormat: Text.PlainText
             color: root.actionStatus !== "" || root.isStale
               || root.emptyKind === "search-error" || root.emptyKind === "search-timeout"
               || root.emptyKind === "status-error" || root.emptyKind === "status-timeout"
@@ -1167,6 +1169,7 @@ Item {
                 Text {
                   width: parent.width
                   text: row.title
+                  textFormat: Text.PlainText
                   color: row.hasCursor ? root.selectedText : root.foreground
                   opacity: row.canOpenDocument ? 1 : 0.55
                   font.family: root.fontFamily
@@ -1178,6 +1181,7 @@ Item {
                   width: parent.width
                   visible: row.metaText !== ""
                   text: row.metaText
+                  textFormat: Text.PlainText
                   color: row.hasCursor ? root.selectedText : root.foreground
                   opacity: 0.7
                   font.family: root.fontFamily
@@ -1224,6 +1228,7 @@ Item {
             Text {
               width: parent.width
               text: root.emptyCopy()
+              textFormat: Text.PlainText
               color: root.emptyKind === "search-error" || root.emptyKind === "search-timeout"
                 || root.emptyKind === "status-error" || root.emptyKind === "status-timeout"
                 || root.emptyKind === "ls-error" || root.emptyKind === "ls-timeout"

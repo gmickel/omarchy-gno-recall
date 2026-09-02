@@ -137,6 +137,7 @@ Item {
   property int _runningSearchGen: 0
   property bool _runningSearchDeep: false
   property string _pendingSearchQuery: ""
+  property string _pendingSearchStdin: ""
   property int _pendingSearchGen: 0
   property bool _pendingSearchDeep: false
   property bool _openTimedOut: false
@@ -161,6 +162,29 @@ Item {
   property int _pendingLsGen: 0
   property int _pendingLsDocCount: 0
   property bool _lsAppend: false
+
+  function pluginScript(rel) {
+    var url = Qt.resolvedUrl(rel).toString()
+    if (url.indexOf("file://") === 0)
+      url = decodeURIComponent(url.slice(7))
+    return url
+  }
+
+  function isolateCommand(argv) {
+    var list = [pluginScript("scripts/run-in-pgroup.sh")]
+    var source = argv || []
+    for (var i = 0; i < source.length; i++)
+      list.push(String(source[i]))
+    return list
+  }
+
+  function killProcessGroup(proc, sig) {
+    var pid = proc && proc.processId ? proc.processId : 0
+    if (pid > 1)
+      Quickshell.execDetached(["kill", String(sig || "-TERM"), "--", "-" + pid])
+    if (proc && proc.running)
+      proc.signal(sig === "-KILL" ? 9 : 15)
+  }
 
   function setting(name, fallback) {
     var fromProp = settings ? settings[name] : undefined
@@ -508,7 +532,7 @@ Item {
   function signalAndForceKill(proc, forceTimer) {
     if (!proc.running)
       return
-    proc.signal(15)
+    killProcessGroup(proc, "-TERM")
     forceTimer.restart()
   }
 
@@ -597,7 +621,7 @@ Item {
     _probeOversized = false
     _stdout = ""
     _stderr = ""
-    probeProcess.command = argv
+    probeProcess.command = isolateCommand(argv)
     probeProcess.running = true
     probeKillTimer.interval = probeTimeoutMs
     probeKillTimer.restart()
@@ -610,7 +634,7 @@ Item {
     _peekOversized = false
     _stdout = ""
     _stderr = ""
-    peekProcess.command = [gnoPath, "peek", "--json"]
+    peekProcess.command = isolateCommand([gnoPath, "peek", "--json"])
     peekProcess.running = true
     peekKillTimer.interval = peekTimeoutMs
     peekKillTimer.restart()
@@ -828,12 +852,15 @@ Item {
       var snippet = hit.snippet !== undefined && hit.snippet !== null
         ? String(hit.snippet)
         : (hit.content !== undefined && hit.content !== null ? String(hit.content) : "")
+      var collection = collectionFromUri(hit.uri)
+      var cachedCollection = collectionByName(collection)
       rows.push({
         kind: "search",
         docid: String(hit.docid || ""),
         uri: String(hit.uri || ""),
         title: title,
-        collection: collectionFromUri(hit.uri),
+        collection: collection,
+        collectionPath: cachedCollection ? String(cachedCollection.path || "") : "",
         snippet: snippet,
         modifiedAt: source.modifiedAt ? String(source.modifiedAt) : "",
         absPath: source.absPath ? String(source.absPath) : ""
@@ -850,7 +877,7 @@ Item {
     searchKillTimer.stop()
     if (searchProcess.running) {
       _searchTimedOut = false
-      searchProcess.signal(15)
+      killProcessGroup(searchProcess, "-TERM")
       searchForceKillTimer.restart()
     } else {
       searchForceKillTimer.stop()
@@ -895,7 +922,7 @@ Item {
       _pendingSearchQuery = q
       _pendingSearchGen = gen
       _pendingSearchDeep = isDeep
-      searchProcess.signal(15)
+      killProcessGroup(searchProcess, "-TERM")
       searchForceKillTimer.restart()
       console.info("gmickel.gno-recall: search cancel-inflight running=" + _runningSearchGen
         + " pending=" + gen
@@ -931,10 +958,11 @@ Item {
     }
 
     var verb = isDeep ? "query" : "search"
+    _pendingSearchStdin = String(query || "").replace(/[\r\n]/g, " ")
     searchProcess.command = [
+      pluginScript("scripts/search-via-query-file.sh"),
       resolvedGnoPath,
       verb,
-      query,
       "--json",
       "--no-project-affinity",
       "-n",
@@ -1074,20 +1102,42 @@ Item {
     return Math.floor(seconds / 86400) + "d ago"
   }
 
-  function browsedAbsPath(collectionPath, relPath) {
-    var root = String(collectionPath || "").replace(/\/+$/, "")
+  function normalizeRelPath(relPath) {
     var rel = String(relPath || "")
-    if (rel === "")
+    if (rel.indexOf("\0") !== -1)
       return ""
     try {
       if (/%[0-9A-Fa-f]{2}/.test(rel))
         rel = decodeURIComponent(rel)
     } catch (error) {
+      return ""
     }
-    if (rel.charAt(0) === "/")
-      rel = rel.slice(1)
+    if (rel === "" || rel.charAt(0) === "/")
+      return ""
+    var parts = rel.split("/")
+    var out = []
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i]
+      if (part === "" || part === ".")
+        continue
+      if (part === "..") {
+        if (out.length === 0)
+          return ""
+        out.pop()
+        continue
+      }
+      out.push(part)
+    }
+    return out.join("/")
+  }
+
+  function browsedAbsPath(collectionPath, relPath) {
+    var root = String(collectionPath || "").replace(/\/+$/, "")
+    var rel = normalizeRelPath(relPath)
+    if (rel === "")
+      return ""
     if (root === "")
-      return rel
+      return ""
     return root + "/" + rel
   }
 
@@ -1145,6 +1195,7 @@ Item {
         uri: uri,
         title: title,
         collection: String(collectionName || ""),
+        collectionPath: String(collectionPath || ""),
         snippet: "",
         modifiedAt: "",
         absPath: browsedAbsPath(collectionPath, relPath),
@@ -1174,7 +1225,7 @@ Item {
     statusKillTimer.stop()
     if (statusProcess.running) {
       _statusTimedOut = false
-      statusProcess.signal(15)
+      killProcessGroup(statusProcess, "-TERM")
       statusForceKillTimer.restart()
     } else {
       statusForceKillTimer.stop()
@@ -1206,7 +1257,7 @@ Item {
 
     if (statusProcess.running) {
       _pendingStatusGen = gen
-      statusProcess.signal(15)
+      killProcessGroup(statusProcess, "-TERM")
       statusForceKillTimer.restart()
       console.info("gmickel.gno-recall: status cancel-inflight running=" + _runningStatusGen
         + " pending=" + gen)
@@ -1234,7 +1285,7 @@ Item {
       return
     }
 
-    statusProcess.command = [resolvedGnoPath, "status", "--json"]
+    statusProcess.command = isolateCommand([resolvedGnoPath, "status", "--json"])
     statusProcess.running = true
     statusKillTimer.interval = statusTimeoutMs
     statusKillTimer.restart()
@@ -1331,7 +1382,7 @@ Item {
     lsKillTimer.stop()
     if (lsProcess.running) {
       _lsTimedOut = false
-      lsProcess.signal(15)
+      killProcessGroup(lsProcess, "-TERM")
       lsForceKillTimer.restart()
     } else {
       lsForceKillTimer.stop()
@@ -1384,7 +1435,7 @@ Item {
       _pendingLsOffset = off
       _pendingLsGen = gen
       _pendingLsDocCount = docCount
-      lsProcess.signal(15)
+      killProcessGroup(lsProcess, "-TERM")
       lsForceKillTimer.restart()
       console.info("gmickel.gno-recall: ls cancel-inflight running=" + _runningLsGen
         + " pending=" + gen)
@@ -1428,7 +1479,7 @@ Item {
     // gno 1.36.0 rejects --offset 0 ("must be positive"); omit it on page 1.
     if (offset > 0)
       argv.push("--offset", String(offset))
-    lsProcess.command = argv
+    lsProcess.command = isolateCommand(argv)
     lsProcess.running = true
     lsKillTimer.interval = lsTimeoutMs
     lsKillTimer.restart()
@@ -1588,6 +1639,16 @@ Item {
     return browserOpenerOverride !== "" ? browserOpenerOverride : defaultBrowserOpener
   }
 
+  function rowCollectionPath(row) {
+    if (!row)
+      return ""
+    var direct = String(row.collectionPath || "").trim()
+    if (direct !== "")
+      return direct
+    var named = collectionByName(row.collection)
+    return named ? String(named.path || "") : ""
+  }
+
   function rowAbsPath(row) {
     if (!row)
       return ""
@@ -1738,19 +1799,26 @@ Item {
       + " argv=[" + formatArgv(lastOpenArgv) + "]")
   }
 
-  function openSourceFile(absPath) {
+  function openSourceFile(absPath, collectionPath) {
     var path = String(absPath || "").trim()
     if (path === "")
       return showMissingPathGuidance("file")
+    var root = String(collectionPath || "").trim()
+    var contained = [
+      pluginScript("scripts/open-contained.sh"),
+      root,
+      path,
+      "--"
+    ]
     if (fileOpenerOverride !== "")
-      return launchArgv([fileOpenerOverride, path], "file")
-    return launchArgv(["bash", "-lc", defaultFileOpenScript, "bash", path], "file")
+      return launchArgv(contained.concat([fileOpenerOverride]), "file")
+    return launchArgv(contained.concat(["bash", "-lc", defaultFileOpenScript, "bash"]), "file")
   }
 
   function openDocument(row) {
     var path = rowAbsPath(row)
     if (path !== "")
-      return openSourceFile(path)
+      return openSourceFile(path, rowCollectionPath(row))
 
     var uri = rowUri(row)
     if (serveIsRunning() && serveHomeUrl() !== "" && uri !== "") {
@@ -1798,7 +1866,7 @@ Item {
     if (!proc.running)
       return
     _timedOut = true
-    proc.signal(15)
+    killProcessGroup(proc, "-TERM")
     forceTimer.restart()
   }
 
@@ -1806,7 +1874,7 @@ Item {
     if (!searchProcess.running)
       return
     _searchTimedOut = true
-    searchProcess.signal(15)
+    killProcessGroup(searchProcess, "-TERM")
     searchForceKillTimer.restart()
   }
 
@@ -1814,7 +1882,7 @@ Item {
     if (!statusProcess.running)
       return
     _statusTimedOut = true
-    statusProcess.signal(15)
+    killProcessGroup(statusProcess, "-TERM")
     statusForceKillTimer.restart()
   }
 
@@ -1822,7 +1890,7 @@ Item {
     if (!lsProcess.running)
       return
     _lsTimedOut = true
-    lsProcess.signal(15)
+    killProcessGroup(lsProcess, "-TERM")
     lsForceKillTimer.restart()
   }
 
@@ -1830,7 +1898,7 @@ Item {
     if (!openProbeProcess.running)
       return
     _openTimedOut = true
-    openProbeProcess.signal(15)
+    killProcessGroup(openProbeProcess, "-TERM")
     openProbeForceKillTimer.restart()
   }
 
@@ -1853,7 +1921,7 @@ Item {
     id: probeForceKillTimer
     interval: 1000
     repeat: false
-    onTriggered: if (probeProcess.running) probeProcess.signal(9)
+    onTriggered: if (probeProcess.running) root.killProcessGroup(probeProcess, "-KILL")
   }
 
   Timer {
@@ -1867,7 +1935,7 @@ Item {
     id: peekForceKillTimer
     interval: 1000
     repeat: false
-    onTriggered: if (peekProcess.running) peekProcess.signal(9)
+    onTriggered: if (peekProcess.running) root.killProcessGroup(peekProcess, "-KILL")
   }
 
   Timer {
@@ -1881,7 +1949,7 @@ Item {
     id: searchForceKillTimer
     interval: 1000
     repeat: false
-    onTriggered: if (searchProcess.running) searchProcess.signal(9)
+    onTriggered: if (searchProcess.running) root.killProcessGroup(searchProcess, "-KILL")
   }
 
   Timer {
@@ -1895,7 +1963,7 @@ Item {
     id: statusForceKillTimer
     interval: 1000
     repeat: false
-    onTriggered: if (statusProcess.running) statusProcess.signal(9)
+    onTriggered: if (statusProcess.running) root.killProcessGroup(statusProcess, "-KILL")
   }
 
   Timer {
@@ -1909,7 +1977,7 @@ Item {
     id: lsForceKillTimer
     interval: 1000
     repeat: false
-    onTriggered: if (lsProcess.running) lsProcess.signal(9)
+    onTriggered: if (lsProcess.running) root.killProcessGroup(lsProcess, "-KILL")
   }
 
   Timer {
@@ -1923,7 +1991,7 @@ Item {
     id: openProbeForceKillTimer
     interval: 1000
     repeat: false
-    onTriggered: if (openProbeProcess.running) openProbeProcess.signal(9)
+    onTriggered: if (openProbeProcess.running) root.killProcessGroup(openProbeProcess, "-KILL")
   }
 
   Timer {
@@ -2001,6 +2069,7 @@ Item {
     id: searchProcess
     running: false
     command: []
+    stdinEnabled: true
     stdout: SplitParser {
       splitMarker: ""
       onRead: function(data) { root.takeSearchOutput(data, false) }
@@ -2009,7 +2078,13 @@ Item {
       splitMarker: ""
       onRead: function(data) { root.takeSearchOutput(data, true) }
     }
-    onStarted: root._searchStarted = true
+    onStarted: {
+      root._searchStarted = true
+      if (root._pendingSearchStdin !== "") {
+        write(root._pendingSearchStdin + "\n")
+        root._pendingSearchStdin = ""
+      }
+    }
     onRunningChanged: {
       if (!running && root._runningSearchGen !== 0 && !root._searchStarted && !root._searchTimedOut) {
         searchKillTimer.stop()

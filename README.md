@@ -19,13 +19,13 @@ All screenshots show a demo index.
 ## Requirements
 
 - Omarchy with shell plugin support
-- [gno](https://github.com/gmickel/gno) **>= 1.36.0** on `PATH`, or an absolute path in the widget's **Path to gno** setting. gno runs on [Bun](https://bun.sh/): `bun install -g @gmickel/gno`
+- [gno](https://github.com/gmickel/gno) **>= 1.39.2** on `PATH` (needs `--query-file` so overlay search never puts the query on argv), or an absolute path in the widget's **Path to gno** setting. gno runs on [Bun](https://bun.sh/): `bun install -g @gmickel/gno`. That install is **manual setup**: this plugin does not digest-pin or install Bun/gno.
 - A Nerd Font (Omarchy includes one by default)
 
 `gno peek --json` is the snapshot path. Peek `serve.running` is true only for
 `gno serve --detach`. A foreground serve is not detected. Overlay search is a
-second argv-array call: `gno search <query> --json --no-project-affinity -n 20`
-(BM25, about 0.4s). Shift+Enter runs hybrid `gno query <query> --json --no-project-affinity -n 20`
+second argv-array call: `gno search --query-file <runtime-file> --json --no-project-affinity -n 20`
+(BM25, about 0.4s; the query is written to a 0600 file under `XDG_RUNTIME_DIR` and is never on argv). Shift+Enter runs hybrid `gno query --query-file <runtime-file> --json --no-project-affinity -n 20`
 at balanced depth (embeddings + expansion + rerank, 90s timeout, no `--depth`
 flag). Collection browse uses `gno status --json` (collections list) and
 `gno ls <collection> --json -n 50 --offset <n>` (paginated documents). gno
@@ -81,7 +81,7 @@ omarchy plugin remove gmickel.gno-recall
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| Path to gno (`gnoPath`) | empty | Absolute path to `gno` (>= 1.36.0). Empty uses `PATH`. |
+| Path to gno (`gnoPath`) | empty | Absolute path to `gno` (>= 1.39.2). Empty uses `PATH`. |
 | Refresh interval (`refreshIntervalSec`) | 900 | Coarse poll interval in seconds (60–3600). |
 
 ```bash
@@ -118,7 +118,7 @@ The overlay is the summonable surface (`omarchy-shell shell toggle gmickel.gno-r
 
 `omarchy-shell shell summon gmickel.gno-recall '{"mode":"collections"}'` opens the overlay directly on the collections list. The panel **Browse collections** action uses that payload.
 
-Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits, `source.relPath` for browsed documents), snippet, and modified time. gno 1.36.1 and later skip leading YAML frontmatter in those snippets. Browsed documents derive `absPath` by joining the collection's absolute `path` with `source.relPath`. The plugin never calls `gno get`. Arrow keys move the highlight. `j` and `k` type into the filter like any other letter. Search, status, and ls failure/timeout stay inline and keep the overlay interactive. Empty collections and empty-but-initialized indexes have distinct copy from uninitialized guidance.
+Rows show title (URI-tail fallback), collection (peek field for recents, `gno://<collection>/…` for search hits, `source.relPath` for browsed documents), snippet, and modified time. gno 1.36.1 and later skip leading YAML frontmatter in those snippets. Browsed documents derive `absPath` by joining the collection's absolute `path` with a normalized `source.relPath` that cannot walk above the collection root; `scripts/open-contained.sh` then `realpath`s both sides and refuses any path that escapes. Titles and metadata render as plain text. The plugin never calls `gno get`. Arrow keys move the highlight. `j` and `k` type into the filter like any other letter. Search, status, and ls failure/timeout stay inline and keep the overlay interactive. Empty collections and empty-but-initialized indexes have distinct copy from uninitialized guidance.
 
 ### Summon: Super+R, IPC, and alternatives
 

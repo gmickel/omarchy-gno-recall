@@ -29,6 +29,10 @@ Appends SUPER+R → omarchy-shell shell toggle gmickel.gno-recall to
 If SUPER+R is already bound to GNO Recall, exits 0 without writing.
 If SUPER+R is bound to anything else, prints the conflict and exits 1
 without writing. Never calls hl.unbind.
+
+The bindings path must be a regular file owned by the current user. The
+script refuses symlinks, writes a same-directory temp file, locks with
+flock, and installs with an atomic rename.
 EOF
 }
 
@@ -37,11 +41,32 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   exit 0
 fi
 
-if [[ ! -f $BINDINGS_FILE ]]; then
+assert_regular_owned_file() {
+  local path=$1
+  local label=$2
+  if [[ -L $path ]]; then
+    echo "error: ${label} is a symlink: ${path}" >&2
+    exit 1
+  fi
+  if [[ ! -f $path ]]; then
+    echo "error: ${label} is not a regular file: ${path}" >&2
+    exit 1
+  fi
+  local owner
+  owner=$(stat -c '%u' "$path")
+  if [[ $owner != "$UID" ]]; then
+    echo "error: ${label} is not owned by the current user: ${path}" >&2
+    exit 1
+  fi
+}
+
+if [[ ! -e $BINDINGS_FILE ]]; then
   echo "error: missing ${BINDINGS_FILE}" >&2
   echo "Create the Omarchy Hyprland bindings file first, then re-run." >&2
   exit 1
 fi
+
+assert_regular_owned_file "$BINDINGS_FILE" "bindings file"
 
 already_installed() {
   grep -Eq 'o\.bind\(\s*"SUPER \+ R".*gmickel\.gno-recall' "$BINDINGS_FILE" \
@@ -123,8 +148,29 @@ if ((${#conflicts[@]} > 0)); then
 fi
 
 block=$'\n'"${MARKER}"$'\n'"${BIND_LINE}"$'\n'
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
+bindings_dir=$(dirname -- "$BINDINGS_FILE")
+assert_regular_owned_file "$BINDINGS_FILE" "bindings file"
+
+exec 9<"$BINDINGS_FILE"
+if ! flock -x 9; then
+  echo "error: failed to lock ${BINDINGS_FILE}" >&2
+  exit 1
+fi
+
+# Recheck under the lock so a raced installer cannot double-write.
+if already_installed; then
+  echo "GNO Recall SUPER+R is already installed in ${BINDINGS_FILE}"
+  echo "Idempotent: no changes written."
+  exit 0
+fi
+
+tmp=$(mktemp -p "$bindings_dir" .gno-recall-bindings.XXXXXX)
+if [[ -L $tmp ]]; then
+  echo "error: temp path is a symlink: ${tmp}" >&2
+  rm -f -- "$tmp"
+  exit 1
+fi
+trap 'rm -f -- "$tmp"' EXIT
 
 if grep -Fq -- '-- omarchy-which-key:begin' "$BINDINGS_FILE"; then
   awk -v block="$block" '
@@ -142,10 +188,12 @@ else
   printf '%s' "$block" >>"$tmp"
 fi
 
-if ! cp "$tmp" "$BINDINGS_FILE"; then
+chmod --reference="$BINDINGS_FILE" "$tmp"
+if ! mv -f -- "$tmp" "$BINDINGS_FILE"; then
   echo "error: failed to write ${BINDINGS_FILE}" >&2
   exit 1
 fi
+trap - EXIT
 
 echo "Installed SUPER+R → ${BIND_CMD}"
 echo "Wrote ${BINDINGS_FILE}"

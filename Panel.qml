@@ -693,6 +693,7 @@ Panel {
                   Text {
                     width: parent.width
                     text: root.recentTitle(modelData)
+                    textFormat: Text.PlainText
                     color: root.contentForeground
                     opacity: root.recentCanOpenDocument(modelData) ? 1 : 0.55
                     font.family: root.contentFontFamily
@@ -707,6 +708,7 @@ Panel {
                       : (root.recentDetail(modelData) !== "—"
                         ? root.recentDetail(modelData) + " · no file path"
                         : "no file path")
+                    textFormat: Text.PlainText
                     color: root.recentCanOpenDocument(modelData) ? root.dim : Color.urgent
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.caption
