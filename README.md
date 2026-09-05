@@ -218,3 +218,9 @@ When peek has nothing to list, the panel shows one of three copy blocks instead 
 ## License
 
 MIT. Copyright Gordon Mickel.
+
+## CI
+
+Pull requests and main pushes run the deterministic checks in
+`.github/workflows/ci.yml`. Superseded PR runs are cancelled.
+Desktop, theme and live-account acceptance remain local; CI uses no workstation credentials.
