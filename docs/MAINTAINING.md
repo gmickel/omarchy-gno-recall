@@ -8,7 +8,7 @@ installation, or verification. The reviewed plugin commit is the trust root.
 
 - `runtime/package.json` pins the direct GNO and Bun versions.
 - `runtime/package-lock.json` records npm's full resolved dependency graph.
-- `runtime/manifest.json` selects Linux x86_64 glibc artifacts from that graph,
+- `runtime/trust-manifest.json` selects Linux x86_64 glibc artifacts from that graph,
   including native CPU, CUDA, Vulkan, SQLite and image/PDF dependencies. Every
   archive has its exact HTTPS URL, version and SHA-512 integrity value.
 - `runtime/patches.json` lists two reviewed backend source adjustments: disable
@@ -68,7 +68,7 @@ The shell's existing document/browser opener boundary remains unchanged.
 3. Generate the candidate manifest from those immutable artifacts:
 
    ```bash
-   python3 scripts/build-runtime-manifest.py runtime/package-lock.json --output runtime/manifest.json
+   python3 scripts/build-runtime-manifest.py runtime/package-lock.json --output runtime/trust-manifest.json
    ```
 
    This downloads hundreds of archives and extracts approximately 1.3 GiB for
@@ -83,7 +83,7 @@ The shell's existing document/browser opener boundary remains unchanged.
 4. Install under an isolated absolute `XDG_DATA_HOME` and use isolated
    `GNO_CONFIG_DIR`, `GNO_DATA_DIR`, `GNO_CACHE_DIR` and synthetic documents.
    Run `python3 scripts/test-runtime.py`, `node scripts/test-service-runtime.mjs`,
-   `node scripts/test-panel-focus.mjs`,
+   `node scripts/test-panel-focus.mjs`, `python3 scripts/test-marketplace-layout.py`,
    shell syntax checks, and `python3 scripts/smoke-runtime.py`. Run
    `python3 scripts/smoke-runtime.py --models-dir /absolute/path/to/gno/cache/models`
    to exercise fresh model metadata using existing GGUF files without copying
@@ -108,6 +108,21 @@ The shell's existing document/browser opener boundary remains unchanged.
    artifact provenance and actual QA evidence; request fresh validation/security
    review on that same issue. A green CI or `validated` label is not security
    approval. Do not claim approval until the maintainer gives it.
+
+## Marketplace repository layout
+
+Reserve `manifest.json` for the plugin at the repository root. The marketplace
+[discovery rule](https://github.com/omacom/omarchy-plugin-marketplace/blob/aca841ea0d7ecc72553b1c7939549c813dad3997/scripts/build-catalog.mjs#L1648-L1658)
+counts that filename case-insensitively at the root and one directory below it,
+before inspecting its contents. A runtime file with that name makes this
+single-plugin submission fail validation. Keep the runtime lock at
+`runtime/trust-manifest.json`; changing its path alone preserves its bytes,
+runtime identity and existing installations.
+
+`python3 scripts/test-marketplace-layout.py` checks Git's tracked paths against
+that rule and reserves the filename at every depth. CI also checks a clean
+`git archive` export with `--export <directory>` and verifies plugin entry points.
+Run this check after staging any manifest rename or addition.
 
 ## Rollback and support
 

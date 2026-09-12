@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix='gno-recall-smoke-') as temp:
         print(f'{args[0]}: passed ({time.monotonic() - started:.2f}s)')
         return json.loads(result.stdout) if structured else result.stdout
 
-    expected = json.loads((launcher.parent.parent / 'runtime/manifest.json').read_text())['gnoVersion']
+    expected = json.loads((launcher.parent.parent / 'runtime/trust-manifest.json').read_text())['gnoVersion']
     assert run('--version').strip() == expected
     run('init', str(docs), '--name', 'recall-smoke')
     if options.models_dir:

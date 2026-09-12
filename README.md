@@ -52,7 +52,7 @@ cd ~/.config/omarchy/plugins/gmickel.gno-recall
 ./scripts/install-runtime.sh
 ```
 
-This downloads only the exact hash-locked release artifacts in `runtime/manifest.json`, verifies them before extraction, applies the reviewed hash-guarded runtime fixes, and runs no package install scripts. It installs below `${XDG_DATA_HOME:-~/.local/share}/gno-recall/runtimes/`. Global Bun and GNO are not used. Every backend invocation verifies the installed tree before execution; missing, changed or additional files fail closed. Middle-click the widget to refresh after installation.
+This downloads only the exact hash-locked release artifacts in `runtime/trust-manifest.json`, verifies them before extraction, applies the reviewed hash-guarded runtime fixes, and runs no package install scripts. It installs below `${XDG_DATA_HOME:-~/.local/share}/gno-recall/runtimes/`. Global Bun and GNO are not used. Every backend invocation verifies the installed tree before execution; missing, changed or additional files fail closed. Middle-click the widget to refresh after installation.
 
 The backend uses your existing GNO config, data and model-cache locations. For a new index, use `./scripts/verified-gno.sh init /absolute/path/to/notes --name notes`, then `./scripts/verified-gno.sh index`. You can use the same launcher for other GNO CLI commands. The plugin itself never indexes documents or starts a server.
 

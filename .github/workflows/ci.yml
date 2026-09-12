@@ -41,13 +41,9 @@ jobs:
         run: |
           ./scripts/install-runtime.sh
           python3 scripts/smoke-runtime.py
-      - name: Validate manifest entry points
+      - name: Validate marketplace submission layout and entry points
         run: |
-          python3 - <<'PYCODE'
-          import json
-          from pathlib import Path
-          manifest = json.loads(Path('manifest.json').read_text())
-          assert manifest['schemaVersion'] == 1
-          for entry in manifest['entryPoints'].values():
-              assert Path(entry).is_file(), entry
-          PYCODE
+          python3 scripts/test-marketplace-layout.py
+          plugin_export=$(mktemp -d)
+          git archive HEAD | tar -x -C "$plugin_export"
+          python3 scripts/test-marketplace-layout.py --export "$plugin_export"

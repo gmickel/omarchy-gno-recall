@@ -17,7 +17,7 @@ import tempfile
 import urllib.request
 
 PLUGIN = Path(__file__).resolve().parent.parent
-MANIFEST = PLUGIN / 'runtime' / 'manifest.json'
+MANIFEST = PLUGIN / 'runtime' / 'trust-manifest.json'
 BUN = 'node_modules/@oven/bun-linux-x64-baseline/bin/bun'
 GNO = 'node_modules/@gmickel/gno/src/index.ts'
 
