@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "gmickel.gno-recall",
   "name": "GNO Recall",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "author": "Gordon Mickel",
   "license": "MIT",
   "description": "Surface GNO index activity in the Omarchy bar.",
@@ -26,17 +26,9 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "gnoPath": "",
       "refreshIntervalSec": 900
     },
     "schema": [
-      {
-        "key": "gnoPath",
-        "type": "string",
-        "label": "Path to gno",
-        "defaultValue": "",
-        "description": "Absolute path to gno >= 1.39.2 (peek@1.0, --query-file, /doc?uri= deep link). Leave empty to resolve gno from PATH. The plugin never installs or pins gno."
-      },
       {
         "key": "refreshIntervalSec",
         "type": "integer",

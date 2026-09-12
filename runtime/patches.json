@@ -1,0 +1,18 @@
+[
+  {
+    "path": "node_modules/@gmickel/gno/src/llm/cache.ts",
+    "reason": "Keep node-llama-cpp first-use model metadata/download progress off structured stdout.",
+    "beforeSha256": "488d6454331a62af00a9741d1d1f923cc4905433ce0c39d57ab155da1f262ec5",
+    "afterSha256": "8473deac80c6493c03f53067973868b1eee910b533b497ec7ce9e3b03dd50b1c",
+    "find": "const resolvedPath = await resolveModelFile(hfUri, {\n        directory: this.dir,",
+    "replace": "const resolvedPath = await resolveModelFile(hfUri, {\n        cli: false,\n        directory: this.dir,"
+  },
+  {
+    "path": "node_modules/@gmickel/gno/src/llm/native-worker/runtime-config.ts",
+    "reason": "Keep the isolated native worker from loading an external Bun transpiler cache.",
+    "beforeSha256": "70ec5851d51ae422afb6460ce55d96658055b88bb81c715c3516737d8d369e98",
+    "afterSha256": "061fbc2e2a08a4e664c4423da0dbacca50e67f1ec9ede0d5415a397e4667d04b",
+    "find": "const env: Record<string, string> = {\n    GNO_OFFLINE: \"1\",",
+    "replace": "const env: Record<string, string> = {\n    BUN_RUNTIME_TRANSPILER_CACHE_PATH: \"0\",\n    GNO_OFFLINE: \"1\","
+  }
+]

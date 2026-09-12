@@ -1,7 +1,8 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash -p
 # Run gno search|query with the query on stdin, never on argv.
 # Usage: search-via-query-file.sh <gno> <search|query> [gno flags...]
 set -euo pipefail
+export PATH=/usr/bin:/bin
 
 if [[ $# -lt 2 ]]; then
   echo "usage: search-via-query-file.sh <gno> <search|query> [flags...]" >&2

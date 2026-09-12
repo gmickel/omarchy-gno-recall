@@ -46,6 +46,7 @@ Item {
   readonly property var liveSnapshot: service ? service.snapshot : null
   readonly property var lastGood: service ? service.lastGoodSnapshot : null
   readonly property var displaySnapshot: liveSnapshot ? liveSnapshot : lastGood
+  readonly property bool runtimeBlocked: service ? service.runtimeBlocked === true : false
   readonly property bool isStale: service ? service.stale === true : false
   readonly property string searchState: service ? String(service.searchState || "idle") : "idle"
   readonly property bool searchLoading: service ? service.searchLoading === true : false
@@ -531,6 +532,8 @@ Item {
   }
 
   function resolveStatusLine() {
+    if (runtimeBlocked)
+      return "Runtime blocked · scripts/install-runtime.sh --repair, then refresh" + (isStale ? " · cached rows" : "")
     if (actionStatus !== "")
       return actionStatus
     if (browseLevel === levelCollections) {
@@ -584,7 +587,7 @@ Item {
 
   function emptyCopy() {
     if (emptyKind === "uninitialized")
-      return "GNO is not initialized yet.\n\nRun gno init in a terminal, then summon Recall again."
+      return "GNO is not initialized yet.\n\nRun scripts/verified-gno.sh init from the plugin checkout, then summon Recall again."
     if (emptyKind === "empty-index")
       return "The index is empty.\n\nAdd documents to a GNO collection so Recall has something to search."
     if (emptyKind === "filter-empty") {
@@ -630,7 +633,7 @@ Item {
       var detail = service && service.message ? String(service.message) : ""
       return "Could not read the GNO index."
         + (detail !== "" ? "\n\n" + detail : "")
-        + "\n\nSet Path to gno in the widget settings, or install gno >= " + (service && service.supportedGnoFloor ? service.supportedGnoFloor : "1.39.2") + " on PATH."
+        + "\n\nRun scripts/install-runtime.sh from the plugin checkout, then refresh Recall."
     }
     return ""
   }
@@ -787,7 +790,7 @@ Item {
       return
     }
     if (service && typeof service.setActionStatus === "function")
-      service.setActionStatus("No file path — start gno serve --detach to open in the web UI.")
+      service.setActionStatus("No file path — start the web UI with the verified launcher (see README).")
   }
 
   function openWebAt(index) {
@@ -1082,7 +1085,7 @@ Item {
             width: parent.width
             text: root.statusLine
             textFormat: Text.PlainText
-            color: root.actionStatus !== "" || root.isStale
+            color: root.runtimeBlocked || root.actionStatus !== "" || root.isStale
               || root.emptyKind === "search-error" || root.emptyKind === "search-timeout"
               || root.emptyKind === "status-error" || root.emptyKind === "status-timeout"
               || root.emptyKind === "ls-error" || root.emptyKind === "ls-timeout"

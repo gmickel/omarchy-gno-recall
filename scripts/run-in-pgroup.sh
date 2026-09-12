@@ -1,7 +1,8 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash -p
 # Run a command in a new session/process group so TERM/INT kills descendants.
 # Used as the Process wrapper for every gno invocation.
 set -euo pipefail
+export PATH=/usr/bin:/bin
 
 if [[ -z ${GNO_RECALL_SESSION:-} ]]; then
   export GNO_RECALL_SESSION=1

@@ -14,15 +14,13 @@ Item {
   property var settings: ({})
 
   readonly property string pluginId: "gmickel.gno-recall"
-  readonly property string supportedGnoFloor: "1.39.2"
+  readonly property string supportedGnoFloor: "2.2.1"
   readonly property string peekSchemaVersion: "peek@1.0"
   readonly property string supportedPeekSchemaMajor: "peek@1.x"
   readonly property int maxPeekStdoutChars: 524288
   readonly property int maxSearchStdoutChars: 2097152
   readonly property int maxStatusStdoutChars: 524288
   readonly property int maxLsStdoutChars: 524288
-  readonly property int maxProbeStdoutChars: 4096
-  readonly property int probeTimeoutMs: 3000
   readonly property int peekTimeoutMs: 8000
   readonly property int searchTimeoutMs: 15000
   readonly property int deepSearchTimeoutMs: 90000
@@ -52,6 +50,7 @@ Item {
 
   property string state: "loading"
   property string message: ""
+  readonly property bool runtimeBlocked: state === stateRuntimeError && message.indexOf("GNO Recall: ") === 0
   property string resolvedGnoPath: ""
   property var snapshot: null
   property var lastGoodSnapshot: null
@@ -119,12 +118,10 @@ Item {
   property string _pendingOpenKind: ""
   property string _pendingOpenNotice: ""
 
-  property string _phase: ""
   property string _stdout: ""
   property string _stderr: ""
   property bool _started: false
   property bool _timedOut: false
-  property bool _probeOversized: false
   property bool _peekOversized: false
   property bool _refreshQueued: false
   property int _runningPeekGen: 0
@@ -220,10 +217,6 @@ Item {
       }
     }
     return ({})
-  }
-
-  function configuredGnoPath() {
-    return String(setting("gnoPath", "")).trim()
   }
 
   function parseVersionParts(value) {
@@ -410,6 +403,14 @@ Item {
     return !!(err && String(err.code || "") === "RUNTIME")
   }
 
+  function noteRuntimeFailure(parsedError) {
+    var err = parsedError && parsedError.error ? parsedError.error : parsedError
+    if (err && String(err.code || "") === "RUNTIME" && String(err.message || "").indexOf("GNO Recall: ") === 0) {
+      dropLiveSnapshot()
+      setState(stateRuntimeError, String(err.message))
+    }
+  }
+
   function errorDetail(parsedError, stderrText, stdoutText, fallback) {
     var err = parsedError && parsedError.error ? parsedError.error : parsedError
     if (err && err.message)
@@ -452,21 +453,6 @@ Item {
     if (current.length + piece.length > limit)
       return null
     return current + piece
-  }
-
-  function takeProbeOutput(chunk, isStderr) {
-    if (_probeOversized)
-      return
-    var current = isStderr ? _stderr : _stdout
-    var next = accumulateBounded(current, chunk, maxProbeStdoutChars)
-    if (next === null) {
-      killProbeForOversized()
-      return
-    }
-    if (isStderr)
-      _stderr = next
-    else
-      _stdout = next
   }
 
   function takePeekOutput(chunk, isStderr) {
@@ -536,15 +522,6 @@ Item {
     forceTimer.restart()
   }
 
-  function killProbeForOversized() {
-    if (_probeOversized)
-      return
-    _probeOversized = true
-    console.info("gmickel.gno-recall: probe oversized bound=" + maxProbeStdoutChars)
-    probeKillTimer.stop()
-    signalAndForceKill(probeProcess, probeForceKillTimer)
-  }
-
   function killPeekForOversized() {
     if (_peekOversized)
       return
@@ -582,7 +559,7 @@ Item {
   }
 
   function refresh() {
-    if (probeProcess.running || peekProcess.running) {
+    if (peekProcess.running) {
       _refreshQueued = true
       peekGenerationId += 1
       console.info("gmickel.gno-recall: peek coalesce queued gen=" + peekGenerationId
@@ -598,37 +575,11 @@ Item {
     _timedOut = false
     resolvedGnoPath = ""
 
-    var configured = configuredGnoPath()
-    if (configured !== "") {
-      if (configured.charAt(0) !== "/") {
-        dropLiveSnapshot()
-        loading = false
-        setState(stateNotFound, "gnoPath must be an absolute path")
-        return
-      }
-      resolvedGnoPath = configured
-      startProbe("exists", ["/usr/bin/test", "-e", configured])
-      return
-    }
-
-    startProbe("which", ["/usr/bin/which", "gno"])
-  }
-
-  function startProbe(phase, argv) {
-    _phase = phase
-    _started = false
-    _timedOut = false
-    _probeOversized = false
-    _stdout = ""
-    _stderr = ""
-    probeProcess.command = isolateCommand(argv)
-    probeProcess.running = true
-    probeKillTimer.interval = probeTimeoutMs
-    probeKillTimer.restart()
+    resolvedGnoPath = pluginScript("scripts/verified-gno.sh")
+    startPeek(resolvedGnoPath)
   }
 
   function startPeek(gnoPath) {
-    _phase = "peek"
     _started = false
     _timedOut = false
     _peekOversized = false
@@ -646,88 +597,6 @@ Item {
       _refreshQueued = false
       Qt.callLater(root.refresh)
     }
-  }
-
-  function handleProbeExit(exitCode) {
-    probeKillTimer.stop()
-    probeForceKillTimer.stop()
-    var finishedGen = _runningPeekGen
-    if (peekGenIsStale(finishedGen)) {
-      loading = false
-      finishIdle()
-      return
-    }
-    var stdout = String(_stdout || "").trim()
-    if (_probeOversized) {
-      dropLiveSnapshot()
-      loading = false
-      setState(stateSpawnFailure, "gno discovery output exceeded the size bound")
-      finishIdle()
-      return
-    }
-    if (_timedOut) {
-      dropLiveSnapshot()
-      loading = false
-      setState(stateTimeout, "Timed out resolving gno")
-      finishIdle()
-      return
-    }
-    if (!_started) {
-      dropLiveSnapshot()
-      loading = false
-      setState(stateSpawnFailure, "Failed to start gno discovery")
-      finishIdle()
-      return
-    }
-
-    if (_phase === "which") {
-      if (exitCode !== 0 || stdout === "") {
-        dropLiveSnapshot()
-        loading = false
-        setState(stateNotFound, "gno was not found on PATH")
-        finishIdle()
-        return
-      }
-      if (stdout.charAt(0) !== "/") {
-        dropLiveSnapshot()
-        loading = false
-        setState(stateNotFound, "PATH lookup did not return an absolute path")
-        finishIdle()
-        return
-      }
-      resolvedGnoPath = stdout
-      startProbe("exec", ["/usr/bin/test", "-x", resolvedGnoPath])
-      return
-    }
-
-    if (_phase === "exists") {
-      if (exitCode !== 0) {
-        dropLiveSnapshot()
-        loading = false
-        setState(stateNotFound, "gno was not found at " + resolvedGnoPath)
-        finishIdle()
-        return
-      }
-      startProbe("exec", ["/usr/bin/test", "-x", resolvedGnoPath])
-      return
-    }
-
-    if (_phase === "exec") {
-      if (exitCode !== 0) {
-        dropLiveSnapshot()
-        loading = false
-        setState(stateNotExecutable, "gno is not executable: " + resolvedGnoPath)
-        finishIdle()
-        return
-      }
-      startPeek(resolvedGnoPath)
-      return
-    }
-
-    dropLiveSnapshot()
-    loading = false
-    setState(stateSpawnFailure, "Unexpected discovery phase")
-    finishIdle()
   }
 
   function handlePeekExit(exitCode) {
@@ -767,7 +636,7 @@ Item {
     var errObj = errorPayload(stderr, stdout)
     if (isUnknownCommand(stderr, errObj)) {
       dropLiveSnapshot()
-      setState(stateUnknownCommand, "gno does not provide peek; install gno >= " + supportedGnoFloor)
+      setState(stateUnknownCommand, "Bundled GNO does not provide peek; reinstall the plugin runtime")
       finishIdle()
       return
     }
@@ -918,7 +787,7 @@ Item {
     _searchTimedOut = false
     console.info("gmickel.gno-recall: search request gen=" + gen
       + " mode=" + searchMode
-      + " query=" + q)
+      + " queryChars=" + q.length)
 
     if (searchProcess.running) {
       _pendingSearchQuery = q
@@ -1055,6 +924,7 @@ Item {
 
     if (exitCode !== 0) {
       var errObj = errorPayload(stderr, stdout)
+      noteRuntimeFailure(errObj)
       searchResults = []
       searchHitCount = 0
       searchState = searchStateError
@@ -1349,6 +1219,7 @@ Item {
 
     if (exitCode !== 0) {
       var errObj = errorPayload(stderr, stdout)
+      noteRuntimeFailure(errObj)
       collectionsState = browseStateError
       collectionsMessage = errorDetail(errObj, stderr, stdout, "gno status failed")
       console.info("gmickel.gno-recall: status error gen=" + finishedGen
@@ -1565,6 +1436,7 @@ Item {
 
     if (exitCode !== 0) {
       var errObj = errorPayload(stderr, stdout)
+      noteRuntimeFailure(errObj)
       if (!append)
         lsDocuments = []
       lsHasMore = false
@@ -1683,7 +1555,7 @@ Item {
   }
 
   function missingPathGuidance() {
-    return "No file path — start gno serve --detach to open in the web UI."
+    return "No file path — start the web UI with the verified launcher (see README)."
   }
 
   function showMissingPathGuidance(kind) {
@@ -1839,7 +1711,7 @@ Item {
       lastOpenKind = "web"
       lastOpenArgv = []
       lastOpenOk = false
-      setActionStatus("Web UI is down. Start it with: gno serve --detach")
+      setActionStatus("Web UI is down. Start it with the verified launcher (see README).")
       console.info("gmickel.gno-recall: open-web blocked serve-down")
       return false
     }
@@ -1859,7 +1731,7 @@ Item {
       lastOpenKind = "web-home"
       lastOpenArgv = []
       lastOpenOk = false
-      setActionStatus("Web UI is down. Start it with: gno serve --detach")
+      setActionStatus("Web UI is down. Start it with the verified launcher (see README).")
       console.info("gmickel.gno-recall: open-web-home blocked serve-down")
       return false
     }
@@ -1912,20 +1784,6 @@ Item {
     running: true
     triggeredOnStart: true
     onTriggered: root.refresh()
-  }
-
-  Timer {
-    id: probeKillTimer
-    interval: root.probeTimeoutMs
-    repeat: false
-    onTriggered: root.killProcess(probeProcess, probeForceKillTimer)
-  }
-
-  Timer {
-    id: probeForceKillTimer
-    interval: 1000
-    repeat: false
-    onTriggered: if (probeProcess.running) root.killProcessGroup(probeProcess, "-KILL")
   }
 
   Timer {
@@ -2006,38 +1864,6 @@ Item {
   }
 
   Process {
-    id: probeProcess
-    running: false
-    command: []
-    stdout: SplitParser {
-      splitMarker: ""
-      onRead: function(data) { root.takeProbeOutput(data, false) }
-    }
-    stderr: SplitParser {
-      splitMarker: ""
-      onRead: function(data) { root.takeProbeOutput(data, true) }
-    }
-    onStarted: root._started = true
-    onRunningChanged: {
-      if (!running && root._phase !== "peek" && root._phase !== "" && !root._started && !root._timedOut) {
-        probeKillTimer.stop()
-        if (root.peekGenIsStale(root._runningPeekGen)) {
-          root.loading = false
-          root.finishIdle()
-          return
-        }
-        root.dropLiveSnapshot()
-        root.loading = false
-        root.setState(root.stateSpawnFailure, "Failed to start gno discovery")
-        root.finishIdle()
-      }
-    }
-    onExited: function(exitCode) {
-      root.handleProbeExit(exitCode)
-    }
-  }
-
-  Process {
     id: peekProcess
     running: false
     command: []
@@ -2051,7 +1877,7 @@ Item {
     }
     onStarted: root._started = true
     onRunningChanged: {
-      if (!running && root._phase === "peek" && !root._started && !root._timedOut) {
+      if (!running && !root._started && !root._timedOut) {
         peekKillTimer.stop()
         if (root.peekGenIsStale(root._runningPeekGen)) {
           root.loading = false

@@ -1,0 +1,8 @@
+{
+  "name": "gno-recall-runtime",
+  "private": true,
+  "dependencies": {
+    "@gmickel/gno": "2.2.1",
+    "@oven/bun-linux-x64-baseline": "1.4.2"
+  }
+}

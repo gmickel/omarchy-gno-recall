@@ -123,6 +123,8 @@ Panel {
   }
 
   function healthLabel() {
+    if (service && service.runtimeBlocked === true)
+      return "Runtime blocked"
     var st = serviceState
     if (st === "ready")
       return "Ready"
@@ -219,7 +221,7 @@ Panel {
 
   function bodyCopy() {
     if (bodyKind === "uninitialized")
-      return "GNO is not initialized yet.\n\nRun gno init in a terminal, then middle-click this widget to refresh."
+      return "GNO is not initialized yet.\n\nRun scripts/verified-gno.sh init from the plugin checkout, then middle-click this widget to refresh."
     if (bodyKind === "empty")
       return "The index is empty.\n\nAdd documents to a GNO collection so Recall has something to show."
     if (bodyKind === "loading")
@@ -228,7 +230,7 @@ Panel {
       var detail = service && service.message ? String(service.message) : ""
       return "Could not read the GNO index."
         + (detail !== "" ? "\n\n" + detail : "")
-        + "\n\nSet Path to gno in the widget settings, or install gno >= " + (service && service.supportedGnoFloor ? service.supportedGnoFloor : "1.39.2") + " on PATH."
+        + "\n\nRun scripts/install-runtime.sh from the plugin checkout, then refresh Recall."
     }
     return ""
   }
@@ -329,7 +331,7 @@ Panel {
       return
     }
     if (service && typeof service.setActionStatus === "function")
-      service.setActionStatus("No file path — start gno serve --detach to open in the web UI.")
+      service.setActionStatus("No file path — start the web UI with the verified launcher (see README).")
   }
 
   function openRecentWeb(index) {
@@ -564,7 +566,7 @@ Panel {
               width: parent.width
               text: root.serveRunning
                 ? "Open GNO web UI"
-                : "Open GNO web UI — start: gno serve --detach"
+                : "Open GNO web UI — see README to start it"
               enabled: root.serveRunning
               bordered: true
               foreground: root.contentForeground
@@ -581,7 +583,7 @@ Panel {
             Text {
               visible: !root.serveRunning
               width: parent.width
-              text: "Web UI is down. The plugin never starts gno serve."
+              text: "Web UI is down. Start it with the verified launcher (see README)."
               color: root.dim
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.caption

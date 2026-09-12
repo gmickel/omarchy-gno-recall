@@ -17,7 +17,7 @@ jobs:
   check:
     name: CI
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,9 +28,19 @@ jobs:
           node-version: '24'
       - name: Check panel focus release
         run: node scripts/test-panel-focus.mjs
+      - name: Check runtime trust boundary
+        run: python3 scripts/test-runtime.py
+      - name: Check runtime failure UI
+        run: node scripts/test-service-runtime.mjs
       - name: Check shell syntax
         run: |
           for script in scripts/*.sh; do bash -n "$script"; done
+      - name: Install and smoke-test pinned runtime
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/gno-recall-runtime
+        run: |
+          ./scripts/install-runtime.sh
+          python3 scripts/smoke-runtime.py
       - name: Validate manifest entry points
         run: |
           python3 - <<'PYCODE'

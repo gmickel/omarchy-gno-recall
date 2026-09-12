@@ -111,6 +111,8 @@ BarWidget {
 
   function resolveVisualKind() {
     var st = serviceState
+    if (recallService && recallService.runtimeBlocked === true)
+      return "degraded"
     if (st === "ready" && displaySnapshot && displaySnapshot.initialized === false)
       return "init-guidance"
     if (st === "not-found" || st === "not-executable" || st === "version-skew" || st === "unknown-command"
@@ -188,7 +190,7 @@ BarWidget {
     if (kind === "setup-guidance")
       return "GNO Recall — set up gno" + (detail !== "" ? ": " + detail : "")
     if (kind === "init-guidance")
-      return "GNO Recall — run gno init"
+      return "GNO Recall — initialize with the verified launcher (see README)"
     if (kind === "degraded")
       return "GNO Recall — degraded" + (detail !== "" ? ": " + detail : "")
     return "GNO Recall"
