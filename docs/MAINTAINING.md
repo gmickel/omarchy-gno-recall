@@ -128,11 +128,15 @@ The shell's existing document/browser opener boundary remains unchanged.
    notes. Keep user install/update/recovery instructions accurate. Commit the
    lockfile, trust manifest, launcher changes, tests and docs together. Keep
    `.flow/` local and gitignored; do not add project automation scaffolding.
-8. Publish through the repository PR/CI workflow. On marketplace issue **#3590**,
-   provide the exact resulting commit SHA, pinning/verification entry points,
-   artifact provenance and actual QA evidence; request fresh validation/security
-   review on that same issue. A green CI or `validated` label is not security
-   approval. Do not claim approval until the maintainer gives it.
+8. Publish through the repository PR/CI workflow. For this existing listing, use
+   the [Plugin verification form](https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=verify-plugin.yml)
+   and select **Verify and publish a newer upstream commit**. Supply plugin ID
+   `gmickel.gno-recall`, the repository URL and the full resulting main SHA.
+   Initial submission #3590 is historical; updates use the verification workflow.
+   Include the change scope and relevant validation evidence. Even metadata-only
+   commits require promotion of the new exact snapshot to retain verification.
+   A green CI or `validated` label is not security approval; the marketplace
+   maintainer must approve the new snapshot.
 
 ## Marketplace repository layout
 
