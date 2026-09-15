@@ -34,7 +34,7 @@ data = {'schema': 1, 'platform': 'linux-x86_64-glibc',
 with tempfile.TemporaryDirectory(prefix='gno-recall-build-') as temp:
     root, cache = Path(temp) / 'runtime', Path(temp) / 'cache'
     root.mkdir(); cache.mkdir()
-    runtime.assemble(data, root, cache)
+    runtime.assemble(data, root, cache, measure=True)
     data['treeSha256'] = runtime.tree_digest(root)
 args.output.write_text(json.dumps(data, indent=2) + '\n')
 print(f"Wrote {len(artifacts)} pinned artifacts to {args.output}")

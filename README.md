@@ -52,7 +52,7 @@ cd ~/.config/omarchy/plugins/gmickel.gno-recall
 ./scripts/install-runtime.sh
 ```
 
-This downloads only the exact hash-locked release artifacts in `runtime/trust-manifest.json`, verifies them before extraction, applies the reviewed hash-guarded runtime fixes, and runs no package install scripts. It installs below `${XDG_DATA_HOME:-~/.local/share}/gno-recall/runtimes/`. Global Bun and GNO are not used. Every backend invocation verifies the installed tree before execution; missing, changed or additional files fail closed. Middle-click the widget to refresh after installation.
+This downloads only the exact hash-locked release artifacts in `runtime/trust-manifest.json`, enforces their exact compressed byte sizes and a 300-second total deadline per archive, verifies them before extraction, applies the reviewed hash-guarded runtime fixes, and runs no package install scripts. It installs below `${XDG_DATA_HOME:-~/.local/share}/gno-recall/runtimes/`. Global Bun and GNO are not used. Every backend invocation verifies the installed tree before execution; missing, changed or additional files fail closed. Middle-click the widget to refresh after installation.
 
 The backend uses your existing GNO config, data and model-cache locations. For a new index, use `./scripts/verified-gno.sh init /absolute/path/to/notes --name notes`, then `./scripts/verified-gno.sh index`. You can use the same launcher for other GNO CLI commands. The plugin itself never indexes documents or starts a server.
 
@@ -75,7 +75,7 @@ omarchy bar move gmickel.gno-recall --section right
 omarchy plugin update gmickel.gno-recall
 ```
 
-Then run the installed checkout's `./scripts/install-runtime.sh` again and refresh Recall. If the trusted manifest changed, the plugin refuses the old runtime until the matching one is installed. Existing runtimes and GNO documents/config/data/models are retained; a global GNO/Bun upgrade does not upgrade Recall.
+Then run the installed checkout's `./scripts/install-runtime.sh` again and refresh Recall. If the trusted manifest changed—even only its archive-size metadata—the plugin refuses the old runtime until the matching one is installed. Existing runtimes and GNO documents/config/data/models are retained; a global GNO/Bun upgrade does not upgrade Recall.
 
 **Shared index compatibility:** a newer global GNO can change an index schema beyond the bundled version. Check compatibility and back up your index before upgrading either writer. Do not downgrade an index by switching binaries; use a reviewed compatible Recall release or a separate index. See [maintainer upgrade and rollback procedure](docs/MAINTAINING.md).
 
@@ -87,7 +87,7 @@ omarchy plugin update
 
 ### Integrity failure / interrupted installation
 
-Run `./scripts/install-runtime.sh --repair` from the installed plugin checkout, then refresh. A verified replacement is staged before replacing an altered runtime. The previous tree is retained with a `.quarantine-<pid>` suffix for inspection. Download failures leave the previous installation intact. Never fix an integrity error by changing hashes or pointing Recall at a global executable.
+Run `./scripts/install-runtime.sh --repair` from the installed plugin checkout, then refresh. A verified replacement is staged before replacing an altered runtime. The previous tree is retained with a `.quarantine-<pid>` suffix for inspection. Download failures (including size mismatches or deadlines) remove partial downloads and leave the previous installation intact. Check network connectivity and retry the installer; there is no verification or timeout bypass. Never fix an integrity error by changing hashes or pointing Recall at a global executable.
 
 ### Remove
 
@@ -116,6 +116,7 @@ From a checkout of this repo:
 ```bash
 ./scripts/install-runtime.sh
 python3 scripts/test-runtime.py
+python3 scripts/test-downloads.py
 python3 scripts/smoke-runtime.py
 omarchy plugin validate .
 qmllint -I "$OMARCHY_PATH/shell" Service.qml BarWidget.qml Panel.qml RecallOverlay.qml

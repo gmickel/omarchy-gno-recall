@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 import platform
 import shutil
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -20,6 +21,9 @@ PLUGIN = Path(__file__).resolve().parent.parent
 MANIFEST = PLUGIN / 'runtime' / 'trust-manifest.json'
 BUN = 'node_modules/@oven/bun-linux-x64-baseline/bin/bun'
 GNO = 'node_modules/@gmickel/gno/src/index.ts'
+DOWNLOAD_DEADLINE = 300
+DISCOVERY_LIMIT = 2 * 1024 ** 3
+DOWNLOAD_CHUNK = 64 * 1024
 
 
 def digest(path):
@@ -114,32 +118,108 @@ def unpack(archive, target):
                 path.chmod(0o755 if member.mode & 0o111 else 0o644)
 
 
-def fetch(artifact, cache):
+def artifact_size(artifact):
+    size = artifact.get('sizeBytes')
+    if type(size) is not int or size <= 0:
+        raise ValueError('artifact sizeBytes must be a positive integer: ' + artifact['path'])
+    return size
+
+
+def download(artifact, archive, measure):
+    """Child process: stream within the byte budget and verify before returning."""
+    limit = DISCOVERY_LIMIT if measure else artifact_size(artifact)
     algorithm, encoded = artifact['integrity'].split('-', 1)
     if algorithm not in ('sha512', 'sha256'):
         raise ValueError('unsupported artifact digest')
     expected = base64.b64decode(encoded, validate=True)
+    if len(expected) != hashlib.new(algorithm).digest_size:
+        raise ValueError('invalid artifact digest length')
     if not artifact['url'].startswith('https://'):
         raise ValueError('artifact must use HTTPS')
-    archive = cache / hashlib.sha256((artifact['url'] + artifact['integrity']).encode()).hexdigest()
     request = urllib.request.Request(artifact['url'], headers={'User-Agent': 'gno-recall-runtime/1'})
+    total = 0
+    checksum = hashlib.new(algorithm)
     with urllib.request.urlopen(request, timeout=120) as response, archive.open('wb') as out:
         if not response.url.startswith('https://'):
             raise ValueError('insecure artifact redirect')
-        shutil.copyfileobj(response, out)
-    with archive.open('rb') as stream:
-        actual = hashlib.file_digest(stream, algorithm).digest()
-    if actual != expected:
+        length = response.headers.get('Content-Length')
+        if length is not None:
+            if not length.isascii() or not length.isdecimal():
+                raise ValueError('invalid artifact size header')
+            if int(length) > limit or (not measure and int(length) != limit):
+                raise ValueError('artifact size header mismatch: ' + artifact['path'])
+        while True:
+            chunk = response.read(min(DOWNLOAD_CHUNK, limit - total + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise ValueError('artifact size exceeds limit: ' + artifact['path'])
+            out.write(chunk)
+            checksum.update(chunk)
+    if total == 0 or (not measure and total != limit):
+        raise ValueError('artifact size mismatch (truncated): ' + artifact['path'])
+    if checksum.digest() != expected:
         raise ValueError('artifact checksum mismatch: ' + artifact['path'])
-    return artifact, archive
 
 
-def assemble(data, root, cache):
+def fetch(artifact, cache, *, measure=False, deadline=DOWNLOAD_DEADLINE):
+    if not measure:
+        artifact_size(artifact)
+    archive = cache / hashlib.sha256((artifact['url'] + artifact['integrity']).encode()).hexdigest()
+    try:
+        # A process boundary enforces elapsed time even inside DNS/TLS/header reads.
+        # subprocess.run kills and reaps on timeout before partial-file cleanup.
+        result = subprocess.run([sys.executable, '-I', str(Path(__file__).resolve()), '_download'],
+                                input=json.dumps([artifact, str(archive), measure]), text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=deadline)
+        if result.returncode:
+            raise ValueError(result.stderr.strip() or 'artifact download failed: ' + artifact['path'])
+        if measure:
+            artifact['sizeBytes'] = archive.stat().st_size
+        return artifact, archive
+    except subprocess.TimeoutExpired as error:
+        archive.unlink(missing_ok=True)
+        raise ValueError('artifact download deadline exceeded: ' + artifact['path']) from error
+    except BaseException:
+        archive.unlink(missing_ok=True)
+        raise
+
+
+def assemble(data, root, cache, *, measure=False):
     # Nested dependencies may share archives; fetch each once to avoid cache races.
-    unique = {(a['url'], a['integrity']): a for a in data['artifacts']}
+    unique = {}
+    for artifact in data['artifacts']:
+        key = (artifact['url'], artifact['integrity'])
+        if not measure:
+            size = artifact_size(artifact)
+            if key in unique and size != artifact_size(unique[key]):
+                raise ValueError('conflicting artifact sizes: ' + artifact['path'])
+        unique[key] = artifact
+    downloaded = {}
+    # Submit at most eight transfers; a failed batch never starts the remaining queue.
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        downloaded = {(a['url'], a['integrity']): archive
-                      for a, archive in pool.map(lambda a: fetch(a, cache), unique.values())}
+        remaining = iter(unique.items())
+        pending = {}
+        def submit_next():
+            item = next(remaining, None)
+            if item is not None:
+                key, artifact = item
+                kwargs = {'measure': True} if measure else {}
+                pending[pool.submit(fetch, artifact, cache, **kwargs)] = key
+        for _ in range(8):
+            submit_next()
+        while pending:
+            finished, _ = concurrent.futures.wait(pending, return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in finished:
+                key = pending.pop(future)
+                _, archive = future.result()
+                downloaded[key] = archive
+            for _ in finished:
+                submit_next()
+    if measure:
+        for artifact in data['artifacts']:
+            artifact['sizeBytes'] = unique[(artifact['url'], artifact['integrity'])]['sizeBytes']
     for artifact in sorted(data['artifacts'], key=lambda a: a['path']):
         archive = downloaded[(artifact['url'], artifact['integrity'])]
         rel = PurePosixPath(artifact['path'])
@@ -235,6 +315,10 @@ def run(data, root, args):
 
 
 def main():
+    if sys.argv[1:] == ['_download']:
+        artifact, archive, measure = json.load(sys.stdin)
+        download(artifact, Path(archive), measure)
+        return
     data, identity = manifest()
     root = location(identity)
     command, *args = sys.argv[1:]

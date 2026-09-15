@@ -29,7 +29,9 @@ jobs:
       - name: Check panel focus release
         run: node scripts/test-panel-focus.mjs
       - name: Check runtime trust boundary
-        run: python3 scripts/test-runtime.py
+        run: |
+          python3 scripts/test-runtime.py
+          python3 scripts/test-downloads.py
       - name: Check runtime failure UI
         run: node scripts/test-service-runtime.mjs
       - name: Check shell syntax

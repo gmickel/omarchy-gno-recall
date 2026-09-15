@@ -10,7 +10,8 @@ installation, or verification. The reviewed plugin commit is the trust root.
 - `runtime/package-lock.json` records npm's full resolved dependency graph.
 - `runtime/trust-manifest.json` selects Linux x86_64 glibc artifacts from that graph,
   including native CPU, CUDA, Vulkan, SQLite and image/PDF dependencies. Every
-  archive has its exact HTTPS URL, version and SHA-512 integrity value.
+  archive has its exact HTTPS URL, version, SHA-512 integrity value and compressed
+  `sizeBytes`, measured from the archive only after verifying its digest.
 - `runtime/patches.json` lists two reviewed backend source adjustments: disable
   node-llama-cpp CLI progress during model resolution so first-use deep search
   returns clean JSON, and disable the external Bun transpiler cache in native
@@ -34,7 +35,7 @@ are removed; Bun runs from the verified directory with its explicit config,
 disabled; only included native packages are candidates. GNO 2.2.1 search/query
 run in the CLI and do not delegate to a user's separately running resident.
 
-Installation downloads archives concurrently, verifies them before extraction,
+Installation downloads at most eight archives concurrently, verifies them before extraction,
 then verifies the resulting complete tree before an atomic rename into place.
 It never executes package lifecycle scripts. The manifest content determines the
 installation directory, so a new plugin manifest cannot silently use an old
@@ -42,6 +43,25 @@ runtime. Install is idempotent. `--repair` stages a verified replacement first
 and retains the old tree under `.quarantine-<pid>`; a failed download or check
 leaves the old tree intact. A shared/exclusive file lock coordinates launch and
 installation. Keep the current manifest and runtime together when rolling back.
+
+Each download has a **300-second total deadline**, supervised by the parent using
+an isolated Python subprocess. A timeout kills and reaps that process, then removes
+the partial archive; DNS, connection, TLS, header waits and slow body delivery
+cannot extend the deadline. The socket's 120-second idle timeout is secondary.
+Streaming writes never exceed the committed `sizeBytes`; EOF must match exactly,
+and the checksum must still match. `Content-Length` is optional and never grants
+more bytes; a declared mismatch fails immediately. A failed batch starts no more
+queued downloads; at most the other seven already-started transfers finish under
+their own deadlines before staging is removed. No partial runtime is activated.
+
+The maintainer generator uses the same subprocess deadline, with a **2 GiB
+per-archive discovery ceiling** because a candidate size is not known yet. It
+records `sizeBytes` only after complete checksum verification, never from HTTP
+headers. This ceiling is for generation only; user installation always requires
+the exact committed size. Raising either bound requires a reviewed source change.
+For GNO 2.2.1/Bun 1.4.2, 542 dependency paths share 532 archives totaling
+566,812,950 compressed bytes. The largest is the 174,373,281-byte CUDA extension;
+its 300-second budget requires roughly 0.6 MB/s sustained transfer speed.
 
 This is provenance/integrity verification, not a sandbox. The plugin checkout,
 OS Python/bash/utilities, kernel, dynamic loader, system libraries and GPU drivers
@@ -73,16 +93,21 @@ The shell's existing document/browser opener boundary remains unchanged.
 
    This downloads hundreds of archives and extracts approximately 1.3 GiB for
    the initial release. It does not execute any downloaded code. Review the
-   selected artifact list, version/integrity changes, resulting tree hash and
+   selected artifact list, measured byte sizes, version/integrity changes, resulting tree hash and
    package licenses. Reassess every `runtime/patches.json` entry on an upgrade;
    remove a patch once upstream includes the fix. A changed upstream source
    hash must fail generation until the patch has been explicitly reviewed. Archive extraction normalizes regular files to 0644/0755
    and directories to 0755, rejects links/traversal/special files, and follows
    last-entry semantics for duplicate regular entries in pinned npm tarballs.
    Do not manually adjust the tree hash to bless a failing installed tree.
+   A metadata-only manifest change (including adding or correcting `sizeBytes`)
+   changes the runtime directory identity even when `treeSha256` stays identical.
+   Tell users to rerun `scripts/install-runtime.sh` and refresh Recall after the
+   update. Preserve the previous plugin/manifest/runtime together for rollback.
 4. Install under an isolated absolute `XDG_DATA_HOME` and use isolated
    `GNO_CONFIG_DIR`, `GNO_DATA_DIR`, `GNO_CACHE_DIR` and synthetic documents.
-   Run `python3 scripts/test-runtime.py`, `node scripts/test-service-runtime.mjs`,
+   Run `python3 scripts/test-runtime.py`, `python3 scripts/test-downloads.py`,
+   `node scripts/test-service-runtime.mjs`,
    `node scripts/test-panel-focus.mjs`, `python3 scripts/test-marketplace-layout.py`,
    shell syntax checks, and `python3 scripts/smoke-runtime.py`. Run
    `python3 scripts/smoke-runtime.py --models-dir /absolute/path/to/gno/cache/models`

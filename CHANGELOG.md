@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.1
+
+- Bound every runtime archive download to its committed compressed byte size and
+  a hard 300-second deadline covering connection, headers and body. Reject
+  oversized, truncated, stalled and slow-drip responses; clean up partial files
+  before reporting failure. Thanks to [@HANCORE-linux](https://github.com/HANCORE-linux)
+  for the [download-bound review](https://github.com/omacom/omarchy-plugin-marketplace/issues/3590#issuecomment-5672167746).
+- Record hash-verified archive sizes without changing GNO/Bun/dependency pins or
+  installed runtime contents. Run `./scripts/install-runtime.sh` after updating:
+  the changed trust manifest selects a new runtime directory. Existing runtimes
+  and GNO config/index/models remain intact.
+
 ## 1.1.0
 
 - Replace global/PATH-configured GNO execution with a dedicated, hash-locked GNO
