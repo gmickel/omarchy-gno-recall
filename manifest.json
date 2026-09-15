@@ -5,8 +5,8 @@
   "version": "1.1.1",
   "author": "Gordon Mickel",
   "license": "MIT",
-  "description": "Surface GNO index activity in the Omarchy bar.",
-  "homepage": "https://github.com/gmickel/omarchy-gno-recall",
+  "description": "Search your notes, PDFs, documents and code from the Omarchy bar with GNO, an open-source local search engine (https://gno.sh). Recall gives you keyword and semantic search, recent documents and collection browsing in a keyboard-driven overlay. Open matching files directly and check indexing status from the bar.",
+  "homepage": "https://gno.sh",
   "repository": "https://github.com/gmickel/omarchy-gno-recall",
   "kinds": [
     "service",
