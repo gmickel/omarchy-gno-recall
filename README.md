@@ -41,6 +41,8 @@ The Omarchy plugin installer **never runs hooks**. `omarchy plugin add` only clo
 
 ## Install
 
+Find [GNO Recall on the Omarchy Plugin Marketplace](https://omarchyplugins.com/plugin.html?id=gmickel.gno-recall) for the listing and current verification status. The plugin requires manual runtime setup; follow the commands below.
+
 ```bash
 omarchy plugin add https://github.com/gmickel/omarchy-gno-recall --enable
 ```
